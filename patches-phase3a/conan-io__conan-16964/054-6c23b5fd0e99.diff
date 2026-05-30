@@ -1,0 +1,891 @@
+diff --git a/conan/test/utils/tools.py b/conan/test/utils/tools.py
+index f86cc8ce3a7..090a36c77f2 100644
+--- a/conan/test/utils/tools.py
++++ b/conan/test/utils/tools.py
+@@ -456,7 +456,7 @@ def __init__(self, cache_folder=None, current_folder=None, servers=None, inputs=
+         # create default profile
+         if light:
+             text = "[settings]\nos=Linux"  # Needed at least build-os
+-            save(self.cache.settings_path, "os: [Linux]")
++            save(self.cache.settings_path, "os: [Linux, Windows]")
+         else:
+             text = default_profiles[platform.system()]
+         save(self.cache.default_profile_path, text)
+diff --git a/test/functional/command/new_test.py b/test/functional/command/new_test.py
+deleted file mode 100644
+index 02ef31084e8..00000000000
+--- a/test/functional/command/new_test.py
++++ /dev/null
+@@ -1,24 +0,0 @@
+-import pytest as pytest
+-
+-from conan.test.utils.tools import TestClient
+-
+-
+-# TODO: Remove this test once this feature is used elsewhere to test other things
+-@pytest.mark.tool("cmake")
+-def test_diamonds_cmake_with_new():
+-    tc = TestClient()
+-    tc.run("new cmake_lib -d name=mathematics -d version=3.14")
+-    tc.run("create .")
+-    tc.run("new cmake_lib -d name=ai -d version=0.1 -d requires=mathematics/3.14 -f")
+-    tc.run("create .")
+-    assert "mathematics/3.14: Hello World" in tc.out
+-    tc.run("new cmake_lib -d name=ui -d version=1.0 -d requires=mathematics/3.14 -f")
+-    tc.run("create .")
+-    assert "mathematics/3.14: Hello World" in tc.out
+-    tc.run("new cmake_exe -d name=game -d version=0.0 -d requires=ai/0.1 -d requires=ui/1.0 -f")
+-    tc.run("create .")
+-    assert "mathematics/3.14: Hello World" in tc.out
+-    assert "ai/0.1: Hello World" in tc.out
+-    assert "ui/1.0: Hello World" in tc.out
+-
+-
+diff --git a/test/functional/layout/test_build_system_layout_helpers.py b/test/functional/layout/test_build_system_layout_helpers.py
+index a7ff450e86b..7caaaae26a4 100644
+--- a/test/functional/layout/test_build_system_layout_helpers.py
++++ b/test/functional/layout/test_build_system_layout_helpers.py
+@@ -43,15 +43,17 @@ def test_layout_in_cache(conanfile, build_type, arch):
+     """The layout in the cache is used too, always relative to the "base" folders that the cache
+     requires. But by the default, the "package" is not followed
+     """
+-    client = TurboTestClient()
++    client = TestClient()
+ 
+     libarch = subfolders_arch.get(arch)
+     libpath = "{}{}".format(libarch + "/" if libarch else "", build_type)
+-    ref = RecipeReference.loads("lib/1.0")
+-    pref = client.create(ref, args="-s arch={} -s build_type={}".format(arch, build_type),
+-                         conanfile=conanfile.format(libpath=libpath))
+-    bf = client.cache.pkg_layout(pref).build()
+-    pf = client.cache.pkg_layout(pref).package()
++
++    client.save({"conanfile.py": conanfile.format(libpath=libpath)})
++    client.run(f"create . --name=lib --version=1.0 -s build_type={build_type} -s arch={arch}")
++
++    layout = client.created_layout()
++    bf = layout.build()
++    pf = layout.package()
+ 
+     # Check the build folder
+     assert os.path.exists(os.path.join(os.path.join(bf, libpath), "mylib.lib"))
+diff --git a/test/functional/toolchains/cmake/test_cmake_toolchain.py b/test/functional/toolchains/cmake/test_cmake_toolchain.py
+index de31d29aa1f..00086cd91cd 100644
+--- a/test/functional/toolchains/cmake/test_cmake_toolchain.py
++++ b/test/functional/toolchains/cmake/test_cmake_toolchain.py
+@@ -8,11 +8,10 @@
+ 
+ from conan.tools.cmake.presets import load_cmake_presets
+ from conan.tools.microsoft.visual import vcvars_command
+-from conans.model.recipe_ref import RecipeReference
+ from conan.test.assets.cmake import gen_cmakelists
+ from conan.test.assets.genconanfile import GenConanfile
+ from conan.test.utils.test_files import temp_folder
+-from conan.test.utils.tools import TestClient, TurboTestClient
++from conan.test.utils.tools import TestClient
+ from conans.util.files import save, load, rmdir
+ from test.conftest import tools_locations
+ 
+@@ -336,12 +335,10 @@ def test_install_output_directories():
+     If we change the libdirs of the cpp.package, as we are doing cmake.install, the output directory
+     for the libraries is changed
+     """
+-    ref = RecipeReference.loads("zlib/1.2.11")
+-    client = TurboTestClient()
++    client = TestClient()
+     client.run("new cmake_lib -d name=zlib -d version=1.2.11")
+-    cf = client.load("conanfile.py")
+-    pref = client.create(ref, conanfile=cf)
+-    p_folder = client.get_latest_pkg_layout(pref).package()
++    client.run("create .")
++    p_folder = client.created_layout().package()
+     assert not os.path.exists(os.path.join(p_folder, "mylibs"))
+     assert os.path.exists(os.path.join(p_folder, "lib"))
+ 
+@@ -350,12 +347,14 @@ def test_install_output_directories():
+     cf = cf.replace("cmake_layout(self)",
+                     'cmake_layout(self)\n        self.cpp.package.libdirs = ["mylibs"]')
+ 
+-    pref = client.create(ref, conanfile=cf)
+-    p_folder = client.get_latest_pkg_layout(pref).package()
++    client.save({"conanfile.py": cf})
++    client.run("create .")
++    layout = client.created_layout()
++    p_folder = layout.package()
+     assert os.path.exists(os.path.join(p_folder, "mylibs"))
+     assert not os.path.exists(os.path.join(p_folder, "lib"))
+ 
+-    b_folder = client.get_latest_pkg_layout(pref).build()
++    b_folder = layout.build()
+     if platform.system() != "Windows":
+         gen_folder = os.path.join(b_folder, "build", "Release", "generators")
+     else:
+diff --git a/test/functional/toolchains/cmake/test_cmaketoolchain_paths.py b/test/functional/toolchains/cmake/test_cmaketoolchain_paths.py
+index 2b46aeaceb8..4e2752c054c 100644
+--- a/test/functional/toolchains/cmake/test_cmaketoolchain_paths.py
++++ b/test/functional/toolchains/cmake/test_cmaketoolchain_paths.py
+@@ -377,7 +377,7 @@ def test_cmaketoolchain_path_find_library(settings, find_root_path_modes):
+     """Test that libraries in libdirs of requires can be found with
+     find_library() in consumer CMakeLists
+     """
+-    client = TurboTestClient()
++    client = TestClient()
+ 
+     conanfile = textwrap.dedent("""
+         import os
+@@ -392,12 +392,14 @@ def package(self):
+                 copy(self, "*", self.source_folder, dst=os.path.join(self.package_folder, "lib"))
+     """)
+     client.save({"conanfile.py": conanfile, "libhello.a": "", "hello.lib": ""})
+-    pref_host = client.create(RecipeReference.loads("hello_host/0.1"), conanfile, args=settings)
+-    host_folder = client.get_latest_pkg_layout(pref_host).base_folder
++    client.run("create . --name=hello_host --version=0.1 {}".format(settings))
++
++    host_folder = client.created_layout().base_folder
+     host_folder_hash = host_folder.replace("\\", "/").split("/")[-1]
+-    pref_build = client.create(RecipeReference.loads("hello_build/0.1"),
+-                               conanfile, args="--build-require")
+-    build_folder = client.get_latest_pkg_layout(pref_build).base_folder
++
++    client.run("create . --name=hello_build --version=0.1 --build-require")
++
++    build_folder = client.created_layout().base_folder
+     build_folder_hash = build_folder.replace("\\", "/").split("/")[-1]
+     conanfile = textwrap.dedent("""
+         from conan import ConanFile
+@@ -443,7 +445,7 @@ def test_cmaketoolchain_path_find_program(settings, find_root_path_modes):
+     """Test that executables in bindirs of tool_requires can be found with
+     find_program() in consumer CMakeLists.
+     """
+-    client = TurboTestClient()
++    client = TestClient()
+ 
+     conanfile = textwrap.dedent("""
+         import os
+@@ -458,15 +460,12 @@ def package(self):
+                 copy(self, "*", self.source_folder, os.path.join(self.package_folder, "bin"))
+     """)
+     client.save({"conanfile.py": conanfile, "hello": "", "hello.exe": ""})
+-    client.run("create . --name=hello_host --version=0.1 {}".format(settings))
+-    client.run("create . --name=hello_build --version=0.1 --build-require")
+ 
+-    pref_host = client.create(RecipeReference.loads("hello_host/0.1"), conanfile, args=settings)
+-    host_folder = client.get_latest_pkg_layout(pref_host).base_folder
++    client.run("create . --name=hello_host --version=0.1 {}".format(settings))
++    host_folder = client.created_layout().base_folder
+     host_folder_hash = host_folder.replace("\\", "/").split("/")[-1]
+-    pref_build = client.create(RecipeReference.loads("hello_build/0.1"),
+-                               conanfile, args="--build-require")
+-    build_folder = client.get_latest_pkg_layout(pref_build).base_folder
++    client.run("create . --name=hello_build --version=0.1 --build-require")
++    build_folder = client.created_layout().base_folder
+     build_folder_hash = build_folder.replace("\\", "/").split("/")[-1]
+ 
+     conanfile = textwrap.dedent("""
+diff --git a/test/functional/toolchains/gnu/autotools/test_basic.py b/test/functional/toolchains/gnu/autotools/test_basic.py
+index ca0638607d3..26657ec34fc 100644
+--- a/test/functional/toolchains/gnu/autotools/test_basic.py
++++ b/test/functional/toolchains/gnu/autotools/test_basic.py
+@@ -181,7 +181,7 @@ def test_install_output_directories():
+     If we change the libdirs of the cpp.package, as we are doing cmake.install, the output directory
+     for the libraries is changed
+     """
+-    client = TurboTestClient(path_with_spaces=False)
++    client = TestClient(path_with_spaces=False)
+     client.run("new cmake_lib -d name=hello -d version=1.0")
+     client.run("create .")
+     consumer_conanfile = textwrap.dedent("""
+@@ -215,9 +215,8 @@ def build(self):
+                  "configure.ac": configure_ac,
+                  "Makefile.am": makefile_am,
+                  "main.cpp": main}, clean_first=True)
+-    ref = RecipeReference.loads("zlib/1.2.11")
+-    pref = client.create(ref, conanfile=consumer_conanfile)
+-    p_folder = client.get_latest_pkg_layout(pref).package()
++    client.run("create . --name=zlib --version=1.2.11")
++    p_folder = client.created_layout().package()
+     assert os.path.exists(os.path.join(p_folder, "mybin", "main"))
+     assert not os.path.exists(os.path.join(p_folder, "bin"))
+ 
+diff --git a/test/integration/lockfile/test_ci.py b/test/integration/lockfile/test_ci.py
+index 494d8a5b75d..e8bbd4a2217 100644
+--- a/test/integration/lockfile/test_ci.py
++++ b/test/integration/lockfile/test_ci.py
+@@ -51,7 +51,7 @@ def package_info(self):
+ 
+ @pytest.fixture()
+ def client_setup():
+-    c = TestClient()
++    c = TestClient(light=True)
+     pkb_requirements = """
+     def requirements(self):
+         if self.settings.os == "Windows":
+diff --git a/test/integration/lockfile/test_ci_overrides.py b/test/integration/lockfile/test_ci_overrides.py
+index d8dc41a01b3..a6f2221f6b8 100644
+--- a/test/integration/lockfile/test_ci_overrides.py
++++ b/test/integration/lockfile/test_ci_overrides.py
+@@ -13,7 +13,7 @@ def test_graph_build_order_override_error():
+               |--------------/
+       |-----override------> zlib/1.3
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"zlib/conanfile.py": GenConanfile("zlib"),
+             "liba/conanfile.py": GenConanfile("liba", "0.1").with_requires("zlib/1.0"),
+             "libb/conanfile.py": GenConanfile("libb", "0.1").with_requires("liba/0.1", "zlib/2.0"),
+@@ -59,7 +59,7 @@ def test_graph_build_order_override_replace_requires(replace_pattern):
+ 
+     replace_requires zlib -> zlib/system
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"zlib/conanfile.py": GenConanfile("zlib"),
+             "liba/conanfile.py": GenConanfile("liba", "0.1").with_requires("zlib/1.0"),
+             "libb/conanfile.py": GenConanfile("libb", "0.1").with_requires("liba/0.1", "zlib/2.0"),
+@@ -109,7 +109,7 @@ def test_single_config_decentralized_overrides():
+                 \------override-----> toolc/3.0
+     pkgc -> toola/3.0 -> toolb/1.0 -> toolc/1.0
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"toolc/conanfile.py": GenConanfile("toolc"),
+             "toolb/conanfile.py": GenConanfile("toolb").with_requires("toolc/1.0"),
+             "toola/conanfile.py": GenConanfile("toola", "1.0").with_requirement("toolb/1.0")
+@@ -172,7 +172,7 @@ def test_single_config_decentralized_overrides_nested():
+                \                          \-----------override---------> libf/2.0
+                 \--------------------override--------------------------> libf/3.0
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"libf/conanfile.py": GenConanfile("libf"),
+             "libe/conanfile.py": GenConanfile("libe", "1.0").with_requires("libf/1.0"),
+             "libd/conanfile.py": GenConanfile("libd", "1.0").with_requires("libe/1.0"),
+@@ -233,7 +233,7 @@ def test_single_config_decentralized_overrides_multi(forced):
+                                            \-----------override--------> libf/2.0
+     """
+     override, force = (True, False) if not forced else (False, True)
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"libf/conanfile.py": GenConanfile("libf"),
+             "libe/conanfile.py": GenConanfile("libe", "1.0").with_requires("libf/1.0"),
+             "libd/conanfile.py": GenConanfile("libd", "1.0").with_requires("libe/1.0"),
+@@ -319,7 +319,7 @@ def test_single_config_decentralized_overrides_multi_replace_requires(replace_pa
+                                            \-----------override--------> libf/2.0
+     """
+     override, force = (True, False) if not forced else (False, True)
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"libf/conanfile.py": GenConanfile("libf"),
+             "libe/conanfile.py": GenConanfile("libe", "1.0").with_requires("libf/1.0"),
+             "libd/conanfile.py": GenConanfile("libd", "1.0").with_requires("libe/1.0"),
+diff --git a/test/integration/lockfile/test_ci_revisions.py b/test/integration/lockfile/test_ci_revisions.py
+index bd0b9aa3b7d..6fa1930c37f 100644
+--- a/test/integration/lockfile/test_ci_revisions.py
++++ b/test/integration/lockfile/test_ci_revisions.py
+@@ -48,7 +48,7 @@ def package_info(self):
+ 
+ @pytest.fixture()
+ def client_setup():
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save_home({"global.conf": "core.package_id:default_unknown_mode=recipe_revision_mode"})
+     pkb_requirements = """
+     def requirements(self):
+diff --git a/test/integration/lockfile/test_graph_overrides.py b/test/integration/lockfile/test_graph_overrides.py
+index 1b6af57d2aa..17698db541d 100644
+--- a/test/integration/lockfile/test_graph_overrides.py
++++ b/test/integration/lockfile/test_graph_overrides.py
+@@ -12,7 +12,7 @@ def test_overrides_half_diamond(override, force):
+     pkgc -----> pkgb/0.1 --> pkga/0.1
+        \--(override/force)-->pkga/0.2
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"pkga/conanfile.py": GenConanfile("pkga"),
+             "pkgb/conanfile.py": GenConanfile("pkgb", "0.1").with_requires("pkga/0.1"),
+             "pkgc/conanfile.py": GenConanfile("pkgc", "0.1").with_requirement("pkgb/0.1")
+@@ -45,7 +45,7 @@ def test_overrides_half_diamond_ranges(override, force):
+        pkgc -----> pkgb/0.1 --> pkga/[>0.1 <0.2]
+           \--(override/force)-->pkga/0.2
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"pkga/conanfile.py": GenConanfile("pkga"),
+             "pkgb/conanfile.py": GenConanfile("pkgb", "0.1").with_requires("pkga/[>=0.1 <0.2]"),
+             "pkgc/conanfile.py": GenConanfile("pkgc", "0.1").with_requirement("pkgb/0.1")
+@@ -74,7 +74,7 @@ def test_overrides_half_diamond_ranges_inverted(override, force):
+        pkgc -----> pkgb/0.1 --> pkga/[>=0.1]
+           \--(override/force)-->pkga/0.1
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"pkga/conanfile.py": GenConanfile("pkga"),
+             "pkgb/conanfile.py": GenConanfile("pkgb", "0.1").with_requires("pkga/[>=0.1]"),
+             "pkgc/conanfile.py": GenConanfile("pkgc", "0.1").with_requirement("pkgb/0.1")
+@@ -103,7 +103,7 @@ def test_overrides_diamond(override, force):
+        \------> pkgc/0.1 --> pkga/0.2
+        \--(override/force)-->pkga/0.3
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"pkga/conanfile.py": GenConanfile("pkga"),
+             "pkgb/conanfile.py": GenConanfile("pkgb", "0.1").with_requires("pkga/0.1"),
+             "pkgc/conanfile.py": GenConanfile("pkgc", "0.1").with_requires("pkga/0.2"),
+@@ -156,7 +156,7 @@ def test_overrides_diamond_ranges(override, force):
+        \------> pkgc/0.1 --> pkga/[>=0.2 <0.3]
+        \--(override/force)-->pkga/0.3
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"pkga/conanfile.py": GenConanfile("pkga"),
+             "pkgb/conanfile.py": GenConanfile("pkgb", "0.1").with_requires("pkga/[>=0.1 <0.2]"),
+             "pkgc/conanfile.py": GenConanfile("pkgc", "0.1").with_requires("pkga/[>=0.2 <0.3]"),
+@@ -198,7 +198,7 @@ def test_overrides_multiple(override1, force1, override2, force2):
+       \           \--override---------> pkga/0.2
+        \---override-------------------> pkga/0.3
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"pkga/conanfile.py": GenConanfile("pkga"),
+             "pkgb/conanfile.py": GenConanfile("pkgb", "0.1").with_requires("pkga/0.1"),
+             "pkgc/conanfile.py": GenConanfile("pkgc", "0.1").with_requirement("pkgb/0.1")
+@@ -235,7 +235,7 @@ def test_graph_different_overrides():
+                 \------override-----> toolc/0.3
+     pkgc -> toola/0.3 -> toolb/0.3 -> toolc/0.1
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"toolc/conanfile.py": GenConanfile("toolc"),
+             "toolb/conanfile.py": GenConanfile("toolb").with_requires("toolc/0.1"),
+             "toola/conanfile.py": GenConanfile("toola", "0.1").with_requirement("toolb/0.1")
+@@ -284,7 +284,7 @@ def test_introduced_conflict(override, force):
+     Using --lockfile-partial we can evaluate and introduce a new conflict
+     pkgd -----> pkgb/[*] --> pkga/[>=0.1 <0.2]
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"pkga/conanfile.py": GenConanfile("pkga"),
+             "pkgb/conanfile.py": GenConanfile("pkgb").with_requires("pkga/[>=0.1 <0.2]"),
+             "pkgc/conanfile.py": GenConanfile("pkgc", "0.1").with_requires("pkga/[>=0.2 <0.3]"),
+@@ -339,7 +339,7 @@ def test_command_line_lockfile_overrides():
+     """
+     --lockfile-overrides cannot be abused to inject new overrides, only existing ones
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({
+             "pkga/conanfile.py": GenConanfile("pkga"),
+             "pkgb/conanfile.py": GenConanfile("pkgb", "0.1").with_requires("pkga/0.1"),
+@@ -357,7 +357,7 @@ def test_command_line_lockfile_overrides():
+ 
+ 
+ def test_consecutive_installs():
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({
+         "pkga/conanfile.py": GenConanfile("pkga"),
+         "pkgb/conanfile.py": GenConanfile("pkgb", "0.1").with_requires("pkga/0.1"),
+diff --git a/test/integration/lockfile/test_lock_alias.py b/test/integration/lockfile/test_lock_alias.py
+index 2c07cdb7d48..0b2752a0064 100644
+--- a/test/integration/lockfile/test_lock_alias.py
++++ b/test/integration/lockfile/test_lock_alias.py
+@@ -11,7 +11,7 @@ def test_conanfile_txt_deps_ranges(requires):
+     """
+     conanfile.txt locking it dependencies (with version ranges) using alias
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+     client.save({"pkg/conanfile.py": GenConanfile("pkg"),
+                  "consumer/conanfile.txt": f"[{requires}]\npkg/(latest)"})
+     client.run("create pkg --version=0.1")
+@@ -42,7 +42,7 @@ def test_conanfile_txt_deps_ranges_lock_revisions(requires):
+     """
+     conanfile.txt locking it dependencies (with version ranges)
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+     client.save({"pkg/conanfile.py": GenConanfile("pkg"),
+                  "consumer/conanfile.txt": f"[{requires}]\npkg/(latest)"})
+     client.run("create pkg --version=0.1")
+diff --git a/test/integration/lockfile/test_lock_build_requires.py b/test/integration/lockfile/test_lock_build_requires.py
+index b747699c92c..11efa77f436 100644
+--- a/test/integration/lockfile/test_lock_build_requires.py
++++ b/test/integration/lockfile/test_lock_build_requires.py
+@@ -8,7 +8,7 @@
+ 
+ 
+ def test_lock_build_tool_requires():
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"common/conanfile.py": GenConanfile("common", "1.0").with_settings("os"),
+             "tool/conanfile.py": GenConanfile("tool", "1.0").with_settings("os")
+                                                             .with_requires("common/1.0"),
+@@ -31,7 +31,7 @@ def test_lock_build_tool_requires():
+ 
+ 
+ def test_lock_buildrequires_create():
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"conanfile.py": GenConanfile("tool", "0.1")})
+     c.run("create .  --build-require --lockfile-out=conan.lock")
+     lock = json.loads(c.load("conan.lock"))
+@@ -39,7 +39,7 @@ def test_lock_buildrequires_create():
+ 
+ 
+ def test_lock_buildrequires_export():
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"conanfile.py": GenConanfile("tool", "0.1")})
+     c.run("export . --build-require --lockfile-out=conan.lock")
+     lock = json.loads(c.load("conan.lock"))
+@@ -47,7 +47,7 @@ def test_lock_buildrequires_export():
+ 
+ 
+ def test_lock_buildrequires_create_transitive():
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"dep/conanfile.py": GenConanfile("dep", "0.1"),
+             "tool/conanfile.py": GenConanfile("tool", "0.1").with_requires("dep/0.1")})
+     c.run("create dep")
+@@ -60,7 +60,7 @@ def test_lock_buildrequires_create_transitive():
+ def test_lock_create_build_require_transitive():
+     """ cross compiling from Windows to Linux
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     dep = textwrap.dedent("""
+         from conan import ConanFile
+         class Dep(ConanFile):
+@@ -125,7 +125,7 @@ class TestTransitiveBuildRequires:
+     @pytest.fixture()
+     def client(self):
+         # https://github.com/conan-io/conan/issues/13899
+-        client = TestClient()
++        client = TestClient(light=True)
+         client.save({"zlib/conanfile.py": GenConanfile("zlib", "1.0"),
+                      "cmake/conanfile.py": GenConanfile("cmake", "1.0").with_requires("zlib/1.0"),
+                      "pkg/conanfile.py": GenConanfile("pkg", "1.0").with_build_requires("cmake/1.0"),
+diff --git a/test/integration/lockfile/test_lock_packages.py b/test/integration/lockfile/test_lock_packages.py
+index 90bf00e84f1..5b1d3acbcdd 100644
+--- a/test/integration/lockfile/test_lock_packages.py
++++ b/test/integration/lockfile/test_lock_packages.py
+@@ -14,7 +14,7 @@ def test_lock_packages(requires):
+     NOTE: They are still not used! only to check that it is possible to store them
+           And that the lockfile is still usable
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+     client.save({"pkg/conanfile.py": GenConanfile().with_package_file("file.txt", env_var="MYVAR"),
+                  "consumer/conanfile.txt": f"[{requires}]\npkg/[>0.0]"})
+     with environment_update({"MYVAR": "MYVALUE"}):
+diff --git a/test/integration/lockfile/test_lock_pyrequires.py b/test/integration/lockfile/test_lock_pyrequires.py
+index 6bb07a87a92..7809e4c811f 100644
+--- a/test/integration/lockfile/test_lock_pyrequires.py
++++ b/test/integration/lockfile/test_lock_pyrequires.py
+@@ -9,7 +9,7 @@
+ 
+ def test_transitive_py_requires():
+     # https://github.com/conan-io/conan/issues/5529
+-    client = TestClient()
++    client = TestClient(light=True)
+     conanfile = textwrap.dedent("""
+         from conan import ConanFile
+         class PackageInfo(ConanFile):
+@@ -41,7 +41,7 @@ class MyConanfileBase(ConanFile):
+ 
+ 
+ def test_transitive_matching_ranges():
+-    client = TestClient()
++    client = TestClient(light=True)
+     tool = textwrap.dedent("""
+         from conan import ConanFile
+         class PackageInfo(ConanFile):
+@@ -89,7 +89,7 @@ def configure(self):
+ 
+ 
+ def test_lock_pyrequires_prereleases():
+-    tc = TestClient()
++    tc = TestClient(light=True)
+     tc.save({"dep/conanfile.py": GenConanfile("dep", "1.0-0.1"),
+              "app/conanfile.py": GenConanfile("app", "1.0").with_python_requires("dep/[>=0]")})
+     tc.run("export dep")
+@@ -106,7 +106,7 @@ def test_lock_pyrequires_prereleases():
+ 
+ 
+ def test_lock_pyrequires_create():
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"conanfile.py": GenConanfile("tool", "0.1").with_package_type("python-require")})
+     c.run("create .  --lockfile-out=conan.lock")
+     lock = json.loads(c.load("conan.lock"))
+@@ -114,7 +114,7 @@ def test_lock_pyrequires_create():
+ 
+ 
+ def test_lock_pyrequires_export():
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"conanfile.py": GenConanfile("tool", "0.1").with_package_type("python-require")})
+     c.run("export .  --lockfile-out=conan.lock")
+     lock = json.loads(c.load("conan.lock"))
+@@ -122,7 +122,7 @@ def test_lock_pyrequires_export():
+ 
+ 
+ def test_lock_pyrequires_export_transitive():
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"dep/conanfile.py": GenConanfile("dep", "0.1").with_package_type("python-require"),
+             "tool/conanfile.py": GenConanfile("tool", "0.1").with_package_type("python-require")
+                                                             .with_python_requires("dep/0.1")})
+@@ -134,7 +134,7 @@ def test_lock_pyrequires_export_transitive():
+ 
+ 
+ def test_lock_export_transitive_pyrequire():
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"dep/conanfile.py": GenConanfile("dep", "0.1").with_package_type("python-require"),
+             "pkg/conanfile.py": GenConanfile("pkg", "0.1") .with_python_requires("dep/0.1")})
+     c.run("export dep")
+diff --git a/test/integration/lockfile/test_lock_pyrequires_revisions.py b/test/integration/lockfile/test_lock_pyrequires_revisions.py
+index 06d2cf0251c..1ede503068b 100644
+--- a/test/integration/lockfile/test_lock_pyrequires_revisions.py
++++ b/test/integration/lockfile/test_lock_pyrequires_revisions.py
+@@ -7,7 +7,7 @@
+ 
+ def test_transitive_py_requires_revisions():
+     # https://github.com/conan-io/conan/issues/5529
+-    client = TestClient()
++    client = TestClient(light=True)
+     python_req = textwrap.dedent("""
+         from conan import ConanFile
+         some_var = {}
+@@ -46,7 +46,7 @@ def generate(self):
+ 
+ 
+ def test_transitive_matching_revisions():
+-    client = TestClient()
++    client = TestClient(light=True)
+     dep = textwrap.dedent("""
+        from conan import ConanFile
+        some_var = {}
+diff --git a/test/integration/lockfile/test_lock_requires.py b/test/integration/lockfile/test_lock_requires.py
+index d7db8308395..167f291f848 100644
+--- a/test/integration/lockfile/test_lock_requires.py
++++ b/test/integration/lockfile/test_lock_requires.py
+@@ -15,7 +15,7 @@ def test_conanfile_txt_deps_ranges(requires):
+     """
+     conanfile.txt locking it dependencies (with version ranges)
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+     client.save({"pkg/conanfile.py": GenConanfile(),
+                  "consumer/conanfile.txt": f"[{requires}]\npkg/[>0.0]@user/testing"})
+     client.run("create pkg --name=pkg --version=0.1 --user=user --channel=testing")
+@@ -37,7 +37,7 @@ def test_conanfile_txt_deps_ranges(requires):
+ @pytest.mark.parametrize("command", ["install", "create", "graph info", "export-pkg"])
+ def test_lockfile_out(command):
+     # Check that lockfile out is generated for different commands
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"dep/conanfile.py": GenConanfile("dep", "0.1"),
+             "pkg/conanfile.py": GenConanfile("pkg", "0.1").with_requires("dep/[*]")})
+     c.run("create dep")
+@@ -48,7 +48,7 @@ def test_lockfile_out(command):
+ 
+ def test_lockfile_out_export():
+     # Check that lockfile out is generated for "conan export"
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"pkg/conanfile.py": GenConanfile("pkg", "0.1")})
+     c.run("export pkg --lockfile-out=conan.lock")
+     lock = c.load("conan.lock")
+@@ -60,7 +60,7 @@ def test_conanfile_txt_deps_ranges_transitive(requires):
+     """
+     conanfile.txt locking it dependencies and its transitive dependencies (with version ranges)
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+     client.save({"dep/conanfile.py": GenConanfile(),
+                  "pkg/conanfile.py": GenConanfile().with_requires("dep/[>0.0]@user/testing"),
+                  "consumer/conanfile.txt": f"[{requires}]\npkg/[>0.0]@user/testing"})
+@@ -88,7 +88,7 @@ def test_conanfile_txt_strict(requires):
+     """
+     conanfile.txt locking it dependencies (with version ranges)
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+     client.save({"pkg/conanfile.py": GenConanfile(),
+                  "consumer/conanfile.txt": f"[{requires}]\npkg/[>0.0]@user/testing"})
+     client.run("create pkg --name=pkg --version=0.1 --user=user --channel=testing")
+@@ -128,7 +128,7 @@ def test_conditional_os(requires):
+     conanfile.txt can lock conditional dependencies (conditional on OS for example),
+     with consecutive calls to "conan lock create", augmenting the lockfile
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+ 
+     pkg_conanfile = textwrap.dedent(f"""
+         from conan import ConanFile
+@@ -184,7 +184,7 @@ def requirements(self):
+ @pytest.mark.parametrize("requires", ["requires", "tool_requires"])
+ def test_conditional_same_package(requires):
+     # What happens when a conditional requires different versions of the same package?
+-    client = TestClient()
++    client = TestClient(light=True)
+ 
+     pkg_conanfile = textwrap.dedent("""
+         from conan import ConanFile
+@@ -227,7 +227,7 @@ def requirements(self):
+ 
+ @pytest.mark.parametrize("requires", ["requires", "build_requires"])
+ def test_conditional_incompatible_range(requires):
+-    client = TestClient()
++    client = TestClient(light=True)
+ 
+     pkg_conanfile = textwrap.dedent("""
+         from conan import ConanFile
+@@ -280,7 +280,7 @@ def requirements(self):
+ 
+ @pytest.mark.parametrize("requires", ["requires", "tool_requires"])
+ def test_conditional_compatible_range(requires):
+-    client = TestClient()
++    client = TestClient(light=True)
+ 
+     pkg_conanfile = textwrap.dedent("""
+         from conan import ConanFile
+@@ -332,7 +332,7 @@ def test_partial_lockfile():
+     make sure that a partial lockfile can be applied anywhere downstream without issues,
+     as lockfiles by default are not strict
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"pkga/conanfile.py": GenConanfile("pkga"),
+             "pkgb/conanfile.py": GenConanfile("pkgb", "0.1").with_requires("pkga/[*]"),
+             "pkgc/conanfile.py": GenConanfile("pkgc", "0.1").with_requires("pkgb/[*]"),
+@@ -358,7 +358,7 @@ def test_partial_lockfile():
+ 
+ def test_ux_defaults():
+     # Make sure the when explicit ``--lockfile`` argument, the file must exist, even if is conan.lock
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"conanfile.txt": ""})
+     c.run("install . --lockfile=conan.lock", assert_error=True)
+     assert "ERROR: Lockfile doesn't exist" in c.out
+@@ -485,7 +485,7 @@ def test_error_duplicates(self):
+         Lockfiles do a ``require.ref`` update and that alters some dictionaries iteration, producing
+         an infinite loop and blocking
+         """
+-        c = TestClient()
++        c = TestClient(light=True)
+         pkg = textwrap.dedent("""
+             from conan import ConanFile
+             class Pkg(ConanFile):
+@@ -507,7 +507,7 @@ def requirements(self):
+     def test_error_duplicates_reverse(self):
+         """ Same as above, but order requires changed
+         """
+-        c = TestClient()
++        c = TestClient(light=True)
+         pkg = textwrap.dedent("""
+             from conan import ConanFile
+             class Pkg(ConanFile):
+@@ -530,7 +530,7 @@ def test_error_duplicates_revisions(self):
+         """ 2 different revisions can be added without conflict, if they are not visible and not
+         other conflicting traits
+         """
+-        c = TestClient()
++        c = TestClient(light=True)
+         pkg = textwrap.dedent("""
+             from conan import ConanFile
+             class Pkg(ConanFile):
+@@ -623,7 +623,7 @@ def test_conanfile_txt_deps_ranges(self, requires):
+ 
+ def test_error_test_explicit():
+     # https://github.com/conan-io/conan/issues/14833
+-    client = TestClient()
++    client = TestClient(light=True)
+     test = GenConanfile().with_test("pass").with_class_attribute("test_type = 'explicit'")
+     client.save({"conanfile.py": GenConanfile("pkg", "0.1"),
+                  "test_package/conanfile.py": test})
+@@ -633,7 +633,7 @@ def test_error_test_explicit():
+ 
+ def test_lock_error_create():
+     # https://github.com/conan-io/conan/issues/15801
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"conanfile.py": GenConanfile("pkg", "0.1").with_package_type("build-scripts")})
+     c.run("lock create . -u --lockfile-out=none.lock")
+     lock = json.loads(c.load("none.lock"))
+diff --git a/test/integration/lockfile/test_lock_requires_revisions.py b/test/integration/lockfile/test_lock_requires_revisions.py
+index d6a181389b1..4c482c8b6dc 100644
+--- a/test/integration/lockfile/test_lock_requires_revisions.py
++++ b/test/integration/lockfile/test_lock_requires_revisions.py
+@@ -11,7 +11,7 @@ def test_conanfile_txt_deps_revisions(requires):
+     """
+     conanfile.txt locking it dependencies (with revisions)
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+     client.save({"pkg/conanfile.py": GenConanfile().with_package_id("self.output.info('REV1!!!!')"),
+                  "consumer/conanfile.txt": f"[{requires}]\npkg/0.1@user/testing"})
+     client.run("create pkg --name=pkg --version=0.1 --user=user --channel=testing")
+@@ -37,7 +37,7 @@ def test_conanfile_txt_deps_revisions_transitive(requires, req_version):
+     """
+     conanfile.txt locking it dependencies and its transitive dependencies (with revisions)
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+     client.save({"dep/conanfile.py": GenConanfile().with_package_id("self.output.info('REV1!!!!')"),
+                  "pkg/conanfile.py": GenConanfile().with_requires(f"dep/{req_version}@user/testing"),
+                  "consumer/conanfile.txt": f"[{requires}]\npkg/{req_version}@user/testing"})
+@@ -67,7 +67,7 @@ def test_conanfile_txt_strict_revisions(requires):
+     """
+     conanfile.txt locking it dependencies (with version ranges)
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+     client.save({"pkg/conanfile.py": GenConanfile().with_package_id("self.output.info('REV1!!!!')"),
+                  "consumer/conanfile.txt": f"[{requires}]\npkg/0.1@user/testing"})
+     client.run("create pkg --name=pkg --version=0.1 --user=user --channel=testing")
+@@ -91,7 +91,7 @@ def test_conditional_os(requires):
+     conanfile.txt can lock conditional dependencies (conditional on OS for example),
+     with consecutive calls to "conan lock create", augmenting the lockfile
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+ 
+     pkg_conanfile = textwrap.dedent(f"""
+         from conan import ConanFile
+@@ -151,7 +151,7 @@ def requirements(self):
+ @pytest.mark.parametrize("requires", ["requires", "tool_requires"])
+ def test_conditional_same_package_revisions(requires):
+     # What happens when a conditional requires different versions of the same package?
+-    client = TestClient()
++    client = TestClient(light=True)
+ 
+     pkg_conanfile = textwrap.dedent("""
+         from conan import ConanFile
+diff --git a/test/integration/lockfile/test_options.py b/test/integration/lockfile/test_options.py
+index 05badfcb0ba..23ecbe30623 100644
+--- a/test/integration/lockfile/test_options.py
++++ b/test/integration/lockfile/test_options.py
+@@ -9,7 +9,7 @@ def test_options():
+     the ``graph build-order`` applying a lockfile will return the necessary options to build
+     it in order
+     """
+-    client = TestClient()
++    client = TestClient(light=True)
+     ffmpeg = textwrap.dedent("""
+         from conan import ConanFile
+         class FfmpegConan(ConanFile):
+diff --git a/test/integration/lockfile/test_user_overrides.py b/test/integration/lockfile/test_user_overrides.py
+index 601f365d519..e3e033969a3 100644
+--- a/test/integration/lockfile/test_user_overrides.py
++++ b/test/integration/lockfile/test_user_overrides.py
+@@ -11,7 +11,7 @@ def test_user_overrides():
+     """ Show that it is possible to add things to lockfiles, to pre-lock things explicitly from
+     user side
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"math/conanfile.py": GenConanfile("math"),
+             "engine/conanfile.py": GenConanfile("engine", "1.0").with_requires("math/[*]"),
+             "game/conanfile.py": GenConanfile("game", "1.0").with_requires("engine/[*]")})
+@@ -46,7 +46,7 @@ def test_user_overrides():
+ def test_user_build_overrides():
+     """ Test that it is possible to lock also build-requries
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"cmake/conanfile.py": GenConanfile("cmake"),
+             "engine/conanfile.py": GenConanfile("engine", "1.0").with_build_requires("cmake/[*]")})
+ 
+@@ -79,7 +79,7 @@ def test_user_build_overrides():
+ def test_user_python_overrides():
+     """ Test that it is possible to lock also python-requries
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"pytool/conanfile.py": GenConanfile("pytool"),
+             "engine/conanfile.py": GenConanfile("engine", "1.0").with_python_requires("pytool/[*]")})
+ 
+@@ -112,7 +112,7 @@ def test_user_python_overrides():
+ def test_config_overrides():
+     """ Test that it is possible to lock also config-requires
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.run("lock add --config-requires=config/1.0")
+     assert json.loads(c.load("conan.lock"))["config_requires"] == ["config/1.0"]
+     c.run("lock remove --config-requires=config/1.0")
+@@ -122,7 +122,7 @@ def test_config_overrides():
+ def test_add_revisions():
+     """ Is it possible to add revisions explicitly too
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"math/conanfile.py": GenConanfile("math"),
+             "engine/conanfile.py": GenConanfile("engine", "1.0").with_requires("math/[*]"),
+             "game/conanfile.py": GenConanfile("game", "1.0").with_requires("engine/[*]")})
+@@ -170,7 +170,7 @@ def test_add_multiple_revisions():
+     """ What if we add multiple revisions, mix with and without revisions, with and without
+     timestamps and it will not crash
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     # without revision, it will resolve to latest
+     c.run("lock add --requires=math/1.0#rev1")
+     new_lock = c.load("conan.lock")
+@@ -206,7 +206,7 @@ def test_timestamps_are_updated():
+     """ When ``conan lock add`` adds a revision with a timestamp, or without it, it will be
+     updated in the lockfile-out to the resolved new timestamp
+     """
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.save({"conanfile.txt": "[requires]\nmath/1.0",
+             "math/conanfile.py": GenConanfile("math", "1.0")})
+     c.run("create math")
+@@ -221,7 +221,7 @@ def test_timestamps_are_updated():
+ 
+ def test_lock_add_error():
+     # https://github.com/conan-io/conan/issues/14465
+-    c = TestClient()
++    c = TestClient(light=True)
+     c.run(f"lock add --requires=math/1.0:pid1", assert_error=True)
+     assert "ERROR: Invalid recipe reference 'math/1.0:pid1' is a package reference" in c.out
+ 
+@@ -241,7 +241,7 @@ class TestLockRemove:
+         ('--requires="*/[>=1.0 <2]"', ["math", "engine"])
+     ])
+     def test_lock_remove(self, args, removed):
+-        c = TestClient()
++        c = TestClient(light=True)
+         lock = textwrap.dedent("""\
+             {
+                 "version": "0.5",
+@@ -274,7 +274,7 @@ def test_lock_remove(self, args, removed):
+                                    "math/1.0#85d927a4a067a531b1a9c7619522c015"]),
+     ])
+     def test_lock_remove_revisions(self, args, removed):
+-        c = TestClient()
++        c = TestClient(light=True)
+         lock = textwrap.dedent("""\
+             {
+                 "version": "0.5",
+@@ -305,7 +305,7 @@ def test_lock_remove_revisions(self, args, removed):
+         ("--requires=math/[*]@team*", ["math/2.0@team/stable"]),
+     ])
+     def test_lock_remove_user_channel(self, args, removed):
+-        c = TestClient()
++        c = TestClient(light=True)
+         lock = textwrap.dedent("""\
+             {
+                 "version": "0.5",
+@@ -336,7 +336,7 @@ class TestLockUpdate:
+         ("python-requires", "mytool/1.0", "mytool/1.1"),
+     ])
+     def test_lock_update(self, kind, old, new):
+-        c = TestClient()
++        c = TestClient(light=True)
+         lock = textwrap.dedent("""\
+             {
+                 "version": "0.5",

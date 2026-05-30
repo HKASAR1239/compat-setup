@@ -1,0 +1,239 @@
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+index bc7e3a3f55e..4755bf1a9b7 100644
+--- a/conan/tools/cmake/cmakedeps2/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -74,8 +74,8 @@ def _context(self):
+ 
+         libs = {}
+ 
+-        def _add_libs(info):
+-            if info.libs:
++        def _add_libs(info, component_name=None):
++            if info.libs:  # TODO: Handle component_name for libs
+                 assert len(info.libs) == 1, "New CMakeDeps only allows 1 lib per component"
+                 lib_name = info.libs[0]
+                 target_name = info.get_property("cmake_target_name") or f"{pkg_name}::{lib_name}"
+@@ -93,16 +93,31 @@ def _add_libs(info):
+                                          "location": location,
+                                          "link_location": "",
+                                          "requires": requires}
++            elif info.includedirs and not info.exe:  # Pure header only
++                cmp_name = component_name or pkg_name
++                target_name = info.get_property("cmake_target_name") or f"{pkg_name}::{cmp_name}"
++                includedirs = ";".join(self._path(i, package_folder, package_folder_var)
++                                       for i in info.includedirs)
++                libs[target_name] = {"type": "INTERFACE",
++                                     "includedirs": includedirs}
+ 
+         if cpp_info.has_components:
+             for name, component in cpp_info.components.items():
+-                _add_libs(component)
++                _add_libs(component, name)
+         else:
+             _add_libs(cpp_info)
+ 
+         if libs and f"{pkg_name}::{pkg_name}" not in libs:
+             # Add a generic interface target for the package depending on the others
+-            all_requires = " ".join(libs.keys())
++            if cpp_info.default_components is not None:
++                all_requires = []
++                for default_comp in cpp_info.default_components:
++                    comp = cpp_info.components[default_comp]
++                    comp_name = comp.get_property("cmake_target_name") or f"{pkg_name}::{default_comp}"
++                    all_requires.append(comp_name)
++                all_requires = " ".join(all_requires)
++            else:
++                all_requires = " ".join(libs.keys())
+             libs[f"{pkg_name}::{pkg_name}"] = {"type": "INTERFACE",
+                                                "requires": all_requires}
+ 
+diff --git a/conans/model/build_info.py b/conans/model/build_info.py
+index 951981c0148..786a8c6bc34 100644
+--- a/conans/model/build_info.py
++++ b/conans/model/build_info.py
+@@ -522,6 +522,7 @@ class CppInfo:
+ 
+     def __init__(self, set_defaults=False):
+         self.components = defaultdict(lambda: _Component(set_defaults))
++        self.default_components = None
+         self._package = _Component(set_defaults)
+ 
+     def __getattr__(self, attr):
+@@ -529,7 +530,7 @@ def __getattr__(self, attr):
+         return getattr(self._package, attr)
+ 
+     def __setattr__(self, attr, value):
+-        if attr in ("components", "_package", "_aggregated"):
++        if attr in ("components", "default_components", "_package", "_aggregated"):
+             super(CppInfo, self).__setattr__(attr, value)
+         else:
+             setattr(self._package, attr, value)
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+index e66c1e1d7f8..0ef0366a7fa 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+@@ -209,11 +209,13 @@ def test_libs_components(self, matrix_client_components):
+ 
+             find_package(matrix CONFIG REQUIRED)
+             add_executable(app src/app.cpp)
+-            target_link_libraries(app PRIVATE matrix::module)
++            # standard one, and a custom cmake_target_name one
++            target_link_libraries(app PRIVATE matrix::module MatrixHeaders)
+             """)
+         app_cpp = textwrap.dedent("""
+             #include "module.h"
+-            int main() { module();}
++            #include "headers.h"
++            int main() { module(); headers();}
+             """)
+         c.save({"CMakelists.txt": cmake,
+                 "src/app.cpp": app_cpp})
+@@ -246,6 +248,46 @@ def test_libs_components_default(self, matrix_client_components):
+         c.run("build . -c tools.cmake.cmakedeps:new=True")
+         assert "Conan: Target declared imported STATIC library 'matrix::vector'" in c.out
+         assert "Conan: Target declared imported STATIC library 'matrix::module'" in c.out
++        assert "Conan: Target declared imported INTERFACE library 'MatrixHeaders'" in c.out
++
++    def test_libs_components_default_error(self, matrix_client_components):
++        """
++        Same as above, but it fails, because headers is not in the default components
++        """
++        c = matrix_client_components
++
++        c.run("new cmake_exe -d name=app -d version=0.1 -d requires=matrix/1.0")
++
++        app_cpp = textwrap.dedent("""
++            #include "module.h"
++            #include "headers.h"
++            int main() { module();}
++            """)
++        cmake = textwrap.dedent("""
++            cmake_minimum_required(VERSION 3.15)
++            project(app CXX)
++
++            find_package(matrix CONFIG REQUIRED)
++            add_executable(app src/app.cpp)
++            target_link_libraries(app PRIVATE matrix::matrix)
++            """)
++        c.save({"src/app.cpp": app_cpp,
++                "CMakeLists.txt": cmake})
++        c.run("build . -c tools.cmake.cmakedeps:new=True", assert_error=True)
++        assert "Error in build() method, line 35" in c.out
++        assert "Conan: Target declared imported STATIC library 'matrix::vector'" in c.out
++        assert "Conan: Target declared imported STATIC library 'matrix::module'" in c.out
++        cmake = textwrap.dedent("""
++            cmake_minimum_required(VERSION 3.15)
++            project(app CXX)
++
++            find_package(matrix CONFIG REQUIRED)
++            add_executable(app src/app.cpp)
++            target_link_libraries(app PRIVATE matrix::matrix MatrixHeaders)
++            """)
++        c.save({"CMakeLists.txt": cmake})
++        c.run("build . -c tools.cmake.cmakedeps:new=True")
++        assert "Running CMake.build()" in c.out  # Now it doesn't fail
+ 
+     def test_libs_components_transitive(self, matrix_client_components):
+         """
+diff --git a/test/functional/toolchains/conftest.py b/test/functional/toolchains/conftest.py
+index d00a5a51175..fbb73dc4350 100644
+--- a/test/functional/toolchains/conftest.py
++++ b/test/functional/toolchains/conftest.py
+@@ -58,41 +58,49 @@ def _matrix_client_components():
+     2 components, different than the package name
+     """
+     c = TestClient()
++    headers_h = textwrap.dedent("""
++        #include <iostream>
++        void headers(){ std::cout << "Matrix headers: Release!" << std::endl; }
++        """)
+     vector_h = gen_function_h(name="vector")
+     vector_cpp = gen_function_cpp(name="vector", includes=["vector"])
+     module_h = gen_function_h(name="module")
+     module_cpp = gen_function_cpp(name="module", includes=["module", "vector"], calls=["vector"])
+ 
+     conanfile = textwrap.dedent("""
+-      from os.path import join
+-      from conan import ConanFile
+-      from conan.tools.cmake import CMake
+-      from conan.tools.files import copy
+-
+-      class Matrix(ConanFile):
+-          name = "matrix"
+-          version = "1.0"
+-          settings = "os", "compiler", "build_type", "arch"
+-          generators = "CMakeToolchain"
+-          exports_sources = "src/*", "CMakeLists.txt"
+-
+-          def build(self):
+-              cmake = CMake(self)
+-              cmake.configure()
+-              cmake.build()
+-
+-          def package(self):
+-              cmake = CMake(self)
+-              cmake.install()
+-
+-          def package_info(self):
+-              self.cpp_info.components["vector"].libs = ["vector"]
+-              self.cpp_info.components["vector"].includedirs = ["include"]
+-              self.cpp_info.components["vector"].libdirs = ["lib"]
+-              self.cpp_info.components["module"].libs = ["module"]
+-              self.cpp_info.components["module"].includedirs = ["include"]
+-              self.cpp_info.components["module"].libdirs = ["lib"]
+-              self.cpp_info.components["module"].requires = ["vector"]
++        from conan import ConanFile
++        from conan.tools.cmake import CMake
++
++        class Matrix(ConanFile):
++            name = "matrix"
++            version = "1.0"
++            settings = "os", "compiler", "build_type", "arch"
++            generators = "CMakeToolchain"
++            exports_sources = "src/*", "CMakeLists.txt"
++
++            def build(self):
++                cmake = CMake(self)
++                cmake.configure()
++                cmake.build()
++
++            def package(self):
++                cmake = CMake(self)
++                cmake.install()
++
++            def package_info(self):
++                self.cpp_info.default_components = ["vector", "module"]
++
++                self.cpp_info.components["headers"].includedirs = ["include/headers"]
++                self.cpp_info.components["headers"].set_property("cmake_target_name", "MatrixHeaders")
++
++                self.cpp_info.components["vector"].libs = ["vector"]
++                self.cpp_info.components["vector"].includedirs = ["include"]
++                self.cpp_info.components["vector"].libdirs = ["lib"]
++
++                self.cpp_info.components["module"].libs = ["module"]
++                self.cpp_info.components["module"].includedirs = ["include"]
++                self.cpp_info.components["module"].libdirs = ["lib"]
++                self.cpp_info.components["module"].requires = ["vector"]
+           """)
+ 
+     cmakelists = textwrap.dedent("""
+@@ -103,13 +111,17 @@ def package_info(self):
+ 
+        add_library(vector src/vector.cpp)
+        add_library(module src/module.cpp)
++       add_library(headers INTERFACE src/headers.h)
+        target_link_libraries(module PRIVATE vector)
+ 
++       set_target_properties(headers PROPERTIES PUBLIC_HEADER "src/headers.h")
+        set_target_properties(module PROPERTIES PUBLIC_HEADER "src/module.h")
+        set_target_properties(vector PROPERTIES PUBLIC_HEADER "src/vector.h")
+        install(TARGETS vector module)
++       install(TARGETS headers PUBLIC_HEADER DESTINATION include/headers)
+        """)
+-    c.save({"src/vector.h": vector_h,
++    c.save({"src/headers.h": headers_h,
++            "src/vector.h": vector_h,
+             "src/vector.cpp": vector_cpp,
+             "src/module.h": module_h,
+             "src/module.cpp": module_cpp,

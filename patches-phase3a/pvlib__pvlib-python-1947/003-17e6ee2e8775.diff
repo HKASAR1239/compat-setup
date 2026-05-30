@@ -1,0 +1,12 @@
+diff --git a/pvlib/modelchain.py b/pvlib/modelchain.py
+index 0a63a9997b..d65f262c23 100644
+--- a/pvlib/modelchain.py
++++ b/pvlib/modelchain.py
+@@ -1117,7 +1117,6 @@ def infer_temperature_model(self):
+         temperature_model_parameters = tuple(
+             array.temperature_model_parameters for array in self.system.arrays)
+         params = _common_keys(temperature_model_parameters)
+-        # remove or statement in v0.9
+         if {'a', 'b', 'deltaT'} <= params:
+             return self.sapm_temp
+         elif {'u_c', 'u_v'} <= params:

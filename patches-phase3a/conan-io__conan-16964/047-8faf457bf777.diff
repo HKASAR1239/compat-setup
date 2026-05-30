@@ -1,0 +1,161 @@
+diff --git a/conan/tools/cmake/cmakedeps2/cmakedeps.py b/conan/tools/cmake/cmakedeps2/cmakedeps.py
+index f82389a25d0..6e03dc41ffc 100644
+--- a/conan/tools/cmake/cmakedeps2/cmakedeps.py
++++ b/conan/tools/cmake/cmakedeps2/cmakedeps.py
+@@ -1,4 +1,8 @@
+ import os
++import re
++import textwrap
++
++from jinja2 import Template
+ 
+ from conan.internal import check_duplicated_generator
+ from conan.tools.cmake.cmakedeps2.config import ConfigTemplate2
+@@ -8,7 +12,7 @@
+ from conan.tools.files import save
+ from conan.errors import ConanException
+ from conans.model.dependencies import get_transitive_requires
+-
++from conans.util.files import load
+ 
+ FIND_MODE_MODULE = "module"
+ FIND_MODE_CONFIG = "config"
+@@ -17,6 +21,7 @@
+ 
+ 
+ class CMakeDeps2:
++    _conan_cmakedeps_paths = "conan_cmakedeps_paths.cmake"
+ 
+     def __init__(self, conanfile):
+         self._conanfile = conanfile
+@@ -128,7 +133,15 @@ def get_transitive_requires(self, conanfile):
+         return get_transitive_requires(self._conanfile, conanfile)
+ 
+     def _generate_paths(self):
+-        content = []
++        template = textwrap.dedent("""\
++            {% for pkg_name, folder in pkg_paths.items() %}
++            set({{pkg_name}}_DIR "{{folder}}")
++            {% endfor %}
++            {% if host_runtime_dirs %}
++            set(CONAN_RUNTIME_LIB_DIRS {{ host_runtime_dirs }} )
++            {% endif %}
++            """)
++
+         host_req = self._conanfile.dependencies.host
+         build_req = self._conanfile.dependencies.direct_build
+         test_req = self._conanfile.dependencies.test
+@@ -136,6 +149,7 @@ def _generate_paths(self):
+         # gen_folder = self._conanfile.generators_folder.replace("\\", "/")
+         # if not, test_cmake_add_subdirectory test fails
+         # content.append('set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)')
++        pkg_paths = {}
+         for req, dep in list(host_req.items()) + list(build_req.items()) + list(test_req.items()):
+             cmake_find_mode = self.get_property("cmake_find_mode", dep)
+             cmake_find_mode = cmake_find_mode or FIND_MODE_CONFIG
+@@ -152,13 +166,42 @@ def _generate_paths(self):
+                 if pkg_folder:
+                     config_file = ConfigTemplate2(self, dep).filename
+                     if os.path.isfile(os.path.join(pkg_folder, config_file)):
+-                        content.append(f'set({pkg_name}_DIR "{pkg_folder}")')
++
++                        pkg_paths[pkg_name] = pkg_folder
+                 continue
+ 
+             # If CMakeDeps generated, the folder is this one
+             # content.append(f'set({pkg_name}_ROOT "{gen_folder}")')
+-            content.append(f'set({pkg_name}_DIR "${{CMAKE_CURRENT_LIST_DIR}}")')
+-
+-        # content.append(f'list(APPEND CMAKE_MODULE_PATH "{gen_folder}")')
+-        content = "\n".join(content)
+-        save(self._conanfile, "conan_cmakedeps_paths.cmake", content)
++            pkg_paths[pkg_name] = "${CMAKE_CURRENT_LIST_DIR}"
++
++        context = {"host_runtime_dirs": self._get_host_runtime_dirs(),
++                   "pkg_paths": pkg_paths}
++        content = Template(template, trim_blocks=True, lstrip_blocks=True).render(context)
++        save(self._conanfile, self._conan_cmakedeps_paths, content)
++
++    def _get_host_runtime_dirs(self):
++        host_runtime_dirs = {}
++
++        # Get the previous configuration
++        if os.path.exists(self._conan_cmakedeps_paths):
++            existing_toolchain = load(self._conan_cmakedeps_paths)
++            pattern_lib_dirs = r"set\(CONAN_RUNTIME_LIB_DIRS ([^)]*)\)"
++            variable_match = re.search(pattern_lib_dirs, existing_toolchain)
++            if variable_match:
++                capture = variable_match.group(1)
++                matches = re.findall(r'"\$<\$<CONFIG:([A-Za-z]*)>:([^>]*)>"', capture)
++                for config, paths in matches:
++                    host_runtime_dirs.setdefault(config, []).append(paths)
++
++        is_win = self._conanfile.settings.get_safe("os") == "Windows"
++        for req in self._conanfile.dependencies.host.values():
++            config = req.settings.get_safe("build_type", self.configuration)
++            cppinfo = req.cpp_info.aggregated_components()
++            runtime_dirs = cppinfo.bindirs if is_win else cppinfo.libdirs
++            for d in runtime_dirs:
++                d = d.replace("\\", "/")
++                existing = host_runtime_dirs.setdefault(config, [])
++                if d not in existing:
++                    existing.append(d)
++
++        return ' '.join(f'"$<$<CONFIG:{c}>:{i}>"' for c, v in host_runtime_dirs.items() for i in v)
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new_paths.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new_paths.py
+index 35759a53ce7..f3c04e165f3 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new_paths.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new_paths.py
+@@ -1,3 +1,4 @@
++import re
+ import textwrap
+ 
+ import pytest
+@@ -70,3 +71,27 @@ def package_info(self):
+     c.run(f"build pkg -c tools.cmake.cmakedeps:new={new_value}")
+     assert "Conan toolchain: Including CMakeDeps generated conan_find_paths.cmake" in c.out
+     assert "Hello from dep dep-Config.cmake!!!!!" in c.out
++
++
++class TestRuntimeDirs:
++
++    def test_runtime_lib_dirs_multiconf(self):
++        client = TestClient()
++        app = GenConanfile().with_requires("dep/1.0").with_generator("CMakeDeps")\
++            .with_settings("build_type")
++        client.save({"lib/conanfile.py": GenConanfile(),
++                     "dep/conanfile.py": GenConanfile("dep").with_requires("onelib/1.0",
++                                                                           "twolib/1.0"),
++                     "app/conanfile.py": app})
++        client.run("create lib --name=onelib --version=1.0")
++        client.run("create lib --name=twolib --version=1.0")
++        client.run("create dep  --version=1.0")
++
++        client.run(f'install app -s build_type=Release -c tools.cmake.cmakedeps:new={new_value}')
++        client.run(f'install app -s build_type=Debug -c tools.cmake.cmakedeps:new={new_value}')
++
++        contents = client.load("app/conan_cmakedeps_paths.cmake")
++        pattern_lib_dirs = r"set\(CONAN_RUNTIME_LIB_DIRS ([^)]*)\)"
++        runtime_lib_dirs = re.search(pattern_lib_dirs, contents).group(1)
++        assert "<CONFIG:Release>" in runtime_lib_dirs
++        assert "<CONFIG:Debug>" in runtime_lib_dirs
+diff --git a/test/integration/toolchains/cmake/test_cmaketoolchain.py b/test/integration/toolchains/cmake/test_cmaketoolchain.py
+index 7af778df487..8b954fff7d2 100644
+--- a/test/integration/toolchains/cmake/test_cmaketoolchain.py
++++ b/test/integration/toolchains/cmake/test_cmaketoolchain.py
+@@ -392,6 +392,7 @@ def test_runtime_lib_dirs_single_conf(lib_dir_setup):
+ 
+     client.run(f'install . -s build_type=Release {generator}')
+     contents = client.load("conan_toolchain.cmake")
++    print(contents)
+     pattern_lib_path = r'list\(PREPEND CMAKE_LIBRARY_PATH (.*)\)'
+     pattern_lib_dirs = r'set\(CONAN_RUNTIME_LIB_DIRS (.*) \)'
+ 
+@@ -415,6 +416,7 @@ def test_runtime_lib_dirs_multiconf(lib_dir_setup):
+     client.run(f'install . -s build_type=Debug {generator}')
+ 
+     contents = client.load("conan_toolchain.cmake")
++    print(contents)
+     pattern_lib_dirs = r"set\(CONAN_RUNTIME_LIB_DIRS ([^)]*)\)"
+     runtime_lib_dirs = re.search(pattern_lib_dirs, contents).group(1)
+ 

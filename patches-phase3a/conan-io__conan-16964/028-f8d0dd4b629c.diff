@@ -1,0 +1,13 @@
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+index a3a46c220cd..a065eacef2b 100644
+--- a/conan/tools/cmake/cmakedeps2/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -81,7 +81,7 @@ def _context(self):
+                 "exes": exes,
+                 "libs": libs}
+ 
+-    def _get_libs(self, cpp_info, pkg_name, pkg_folder, pkg_folder_var) -> dict[str, dict]:
++    def _get_libs(self, cpp_info, pkg_name, pkg_folder, pkg_folder_var) -> dict:
+         libs = {}
+         if cpp_info.has_components:
+             for name, component in cpp_info.components.items():

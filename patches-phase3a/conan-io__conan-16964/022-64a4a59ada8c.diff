@@ -1,0 +1,39 @@
+diff --git a/conan/tools/cmake/cmakedeps2/config.py b/conan/tools/cmake/cmakedeps2/config.py
+index a59f6319e9d..f330e28b11f 100644
+--- a/conan/tools/cmake/cmakedeps2/config.py
++++ b/conan/tools/cmake/cmakedeps2/config.py
+@@ -21,7 +21,7 @@ def content(self):
+     @property
+     def filename(self):
+         f = self._cmakedeps.get_cmake_filename(self._conanfile)
+-        return f"{f}-config.cmake" if f == f.lower() else f"{f}Configcmake"
++        return f"{f}-config.cmake" if f == f.lower() else f"{f}Config.cmake"
+ 
+     @property
+     def _context(self):
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+index 63bf20b2aee..846cc3f310f 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+@@ -182,7 +182,7 @@ def build(self):
+         assert "Mytool2 generating out2.c!!!!!" in c.out
+ 
+ 
+-@pytest.mark.tool("cmake")
++@pytest.mark.tool("cmake", "3.15")
+ class TestLibs:
+     def test_libs(self, matrix_client):
+         c = matrix_client
+diff --git a/test/functional/toolchains/conftest.py b/test/functional/toolchains/conftest.py
+index 31b60f8b807..cd66df7c874 100644
+--- a/test/functional/toolchains/conftest.py
++++ b/test/functional/toolchains/conftest.py
+@@ -121,7 +121,7 @@ def package_info(self):
+ 
+        add_library(vector src/vector.cpp)
+        add_library(module src/module.cpp)
+-       add_library(headers INTERFACE src/headers.h)
++       add_library(headers INTERFACE)
+        target_link_libraries(module PRIVATE vector)
+ 
+        set_target_properties(headers PROPERTIES PUBLIC_HEADER "src/headers.h")

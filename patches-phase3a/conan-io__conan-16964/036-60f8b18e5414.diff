@@ -1,0 +1,54 @@
+diff --git a/conans/client/userio.py b/conans/client/userio.py
+index bb1175e3dd1..814026a86eb 100644
+--- a/conans/client/userio.py
++++ b/conans/client/userio.py
+@@ -75,7 +75,8 @@ def request_login(self, remote_name, username=None):
+             self._out.write("Remote '%s' username: " % remote_name)
+             username = self.get_username()
+ 
+-        self._out.write('Please enter a password for "%s" account: ' % username)
++        self._out.write("Please enter a password for user '%s' on remote '%s': "
++                        % (username, remote_name))
+         try:
+             pwd = self.get_password()
+         except ConanException:
+diff --git a/test/integration/command/user_test.py b/test/integration/command/user_test.py
+index 52bd52d05eb..c9563198af7 100644
+--- a/test/integration/command/user_test.py
++++ b/test/integration/command/user_test.py
+@@ -154,7 +154,7 @@ def test_command_user_with_interactive_password_login_prompt_disabled(self):
+         client.save_home({"global.conf": conan_conf})
+         client.run('remote login default admin -p', assert_error=True)
+         self.assertIn('ERROR: Conan interactive mode disabled', client.out)
+-        self.assertNotIn("Please enter a password for \"admin\" account:", client.out)
++        self.assertNotIn("Please enter a password for user 'admin'", client.out)
+         client.run("remote list-users")
+         self.assertIn("default:\n  No user", client.out)
+ 
+diff --git a/test/integration/remote/auth_test.py b/test/integration/remote/auth_test.py
+index da585c94e1f..c0b37392ff5 100644
+--- a/test/integration/remote/auth_test.py
++++ b/test/integration/remote/auth_test.py
+@@ -56,9 +56,9 @@ def test_retries(self):
+         ref = copy.copy(self.ref)
+         ref.revision = rev
+         self.assertTrue(os.path.exists(self.test_server.server_store.export(ref)))
+-        self.assertIn('Please enter a password for "bad"', self.conan.out)
+-        self.assertIn('Please enter a password for "bad2"', self.conan.out)
+-        self.assertIn('Please enter a password for "nacho@gmail.com"', self.conan.out)
++        self.assertIn("Please enter a password for user 'bad'", self.conan.out)
++        self.assertIn("Please enter a password for user 'bad2'", self.conan.out)
++        self.assertIn("Please enter a password for user 'nacho@gmail.com'", self.conan.out)
+ 
+     def test_auth_with_env(self):
+ 
+@@ -128,7 +128,8 @@ def test_no_client_username_checks(self):
+         ref = copy.copy(self.ref)
+         ref.revision = rev
+         self.assertTrue(os.path.exists(self.test_server.server_store.export(ref)))
+-        self.assertIn('Please enter a password for "some_random.special!characters"', client.out)
++        self.assertIn("Please enter a password for user 'some_random.special!characters' on remote 'default'",
++                      client.out)
+ 
+     def test_authorize_disabled_remote(self):
+         tc = TestClient(servers=self.servers)

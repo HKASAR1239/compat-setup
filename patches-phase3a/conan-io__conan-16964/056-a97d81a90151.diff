@@ -1,0 +1,28 @@
+diff --git a/conan/tools/cmake/__init__.py b/conan/tools/cmake/__init__.py
+index 8d49c6e3316..73c8a835b08 100644
+--- a/conan/tools/cmake/__init__.py
++++ b/conan/tools/cmake/__init__.py
+@@ -6,6 +6,9 @@
+ def CMakeDeps(conanfile):  # noqa
+     if conanfile.conf.get("tools.cmake.cmakedeps:new", choices=["will_break_next"]):
+         from conan.tools.cmake.cmakedeps2.cmakedeps import CMakeDeps2
++        conanfile.output.warning("Using the new CMakeDeps generator, behind the "
++                                 "'tools.cmake.cmakedeps:new' gate conf. This conf will change"
++                                 "next release, breaking, so use it only for testing and dev")
+         return CMakeDeps2(conanfile)
+     from conan.tools.cmake.cmakedeps.cmakedeps import CMakeDeps as _CMakeDeps
+     return _CMakeDeps(conanfile)
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+index c4604a7b2c2..5d8c2150413 100644
+--- a/conan/tools/cmake/cmakedeps2/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -161,6 +161,9 @@ def _get_cmake_lib(self, info, components, pkg_folder, pkg_folder_var):
+                   "exelinkflags": " ".join(info.exelinkflags),
+                   "system_libs": system_libs}
+ 
++        if info.frameworks:
++            self._conanfile.output.warning("frameworks not supported yet in new CMakeDeps generator")
++
+         if info.libs:
+             if len(info.libs) != 1:
+                 raise ConanException(f"New CMakeDeps only allows 1 lib per component:\n"

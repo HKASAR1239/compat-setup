@@ -1,0 +1,129 @@
+diff --git a/changelog/3053.bugfix.rst b/changelog/3053.bugfix.rst
+new file mode 100644
+index 0000000000..4b8feb90a9
+--- /dev/null
++++ b/changelog/3053.bugfix.rst
+@@ -0,0 +1,2 @@
++Fixed the default encoding of chunked request bodies to be UTF-8 instead of ISO-8859-1.
++All other methods of supplying a request body already use UTF-8 starting in urllib3 v2.0.
+diff --git a/docs/v2-migration-guide.rst b/docs/v2-migration-guide.rst
+index 06db4a0e18..dae10d273c 100644
+--- a/docs/v2-migration-guide.rst
++++ b/docs/v2-migration-guide.rst
+@@ -53,6 +53,7 @@ Here's a short summary of which changes in urllib3 v2.0 are most important:
+ - Deprecated the ``HTTPResponse.getheader(name, default)`` method in favor of ``HTTPResponse.headers.get(name, default)``, will be removed in v2.1.0.
+ - Deprecated URLs without a scheme (ie 'https://') and will be raising an error in a future version of urllib3.
+ - Changed the default minimum TLS version to TLS 1.2 (previously was TLS 1.0).
++- Changed the default request body encoding from 'ISO-8859-1' to 'UTF-8'.
+ - Removed support for verifying certificate hostnames via ``commonName``, now only ``subjectAltName`` is used.
+ - Removed the default set of TLS ciphers, instead now urllib3 uses the list of ciphers configured by the system.
+ 
+diff --git a/src/urllib3/util/request.py b/src/urllib3/util/request.py
+index 859597e276..82454a099d 100644
+--- a/src/urllib3/util/request.py
++++ b/src/urllib3/util/request.py
+@@ -227,7 +227,7 @@ def chunk_readable() -> typing.Iterable[bytes]:
+                 if not datablock:
+                     break
+                 if encode:
+-                    datablock = datablock.encode("iso-8859-1")
++                    datablock = datablock.encode("utf-8")
+                 yield datablock
+ 
+         chunks = chunk_readable()
+diff --git a/test/with_dummyserver/test_chunked_transfer.py b/test/with_dummyserver/test_chunked_transfer.py
+index c2dc12e769..96f28e0f72 100644
+--- a/test/with_dummyserver/test_chunked_transfer.py
++++ b/test/with_dummyserver/test_chunked_transfer.py
+@@ -1,6 +1,8 @@
+ from __future__ import annotations
+ 
++import io
+ import socket
++import typing
+ 
+ import pytest
+ 
+@@ -57,15 +59,29 @@ def test_chunks(self, chunks: list[bytes | str]) -> None:
+                 assert lines[i * 2] == hex(len(chunk))[2:].encode("utf-8")
+                 assert lines[i * 2 + 1] == chunk.encode("utf-8")
+ 
+-    def _test_body(self, data: bytes | str | None) -> None:
++    def _test_body(
++        self,
++        data: bytes
++        | str
++        | io.BytesIO
++        | io.StringIO
++        | typing.Iterable[bytes]
++        | typing.Iterable[str]
++        | None,
++        expected_data: bytes | None = None,
++    ) -> None:
+         self.start_chunked_handler()
+         with HTTPConnectionPool(self.host, self.port, retries=False) as pool:
+-            pool.urlopen("GET", "/", data, chunked=True)
++            pool.urlopen("GET", "/", body=data, chunked=True)  # type: ignore[arg-type]
+             header, body = self.buffer.split(b"\r\n\r\n", 1)
+ 
+             assert b"Transfer-Encoding: chunked" in header.split(b"\r\n")
+             if data:
+-                bdata = data if isinstance(data, bytes) else data.encode("utf-8")
++                if expected_data is not None:
++                    bdata = expected_data
++                else:
++                    assert isinstance(data, (bytes, str))
++                    bdata = data if isinstance(data, bytes) else data.encode("utf-8")
+                 assert b"\r\n" + bdata + b"\r\n" in body
+                 assert body.endswith(b"\r\n0\r\n\r\n")
+ 
+@@ -79,7 +95,48 @@ def test_bytestring_body(self) -> None:
+         self._test_body(b"thisshouldbeonechunk\r\nasdf")
+ 
+     def test_unicode_body(self) -> None:
+-        self._test_body("thisshouldbeonechunk\r\näöüß")
++        self._test_body(
++            "thisshouldbeonechunk\r\näöüß\xFF",
++            expected_data=b"thisshouldbeonechunk\r\n\xc3\xa4\xc3\xb6\xc3\xbc\xc3\x9f\xc3\xbf",
++        )
++
++    @pytest.mark.parametrize(
++        "bytes_data",
++        [
++            b"thisshouldbeonechunk\r\n\xc3\xa4\xc3\xb6\xc3\xbc\xc3\x9f\xc3\xbf",  # utf-8
++            b"thisshouldbeonechunk\r\n\xe4\xf6\xfc\xdf\xff",  # latin-1
++        ],
++    )
++    def test_bytes_body_fileio(self, bytes_data: bytes) -> None:
++        self._test_body(io.BytesIO(bytes_data), expected_data=bytes_data)
++
++    def test_unicode_body_fileio(self) -> None:
++        self._test_body(
++            io.StringIO("thisshouldbeonechunk\r\näöüß\xFF"),
++            expected_data=b"thisshouldbeonechunk\r\n\xc3\xa4\xc3\xb6\xc3\xbc\xc3\x9f\xc3\xbf",
++        )
++
++    @pytest.mark.parametrize(
++        "bytes_data",
++        [
++            b"thisshouldbeonechunk\r\n\xc3\xa4\xc3\xb6\xc3\xbc\xc3\x9f\xc3\xbf",  # utf-8
++            b"thisshouldbeonechunk\r\n\xe4\xf6\xfc\xdf\xff",  # latin-1
++        ],
++    )
++    def test_bytes_body_iterable(self, bytes_data: bytes) -> None:
++        def send_body() -> typing.Iterable[bytes]:
++            yield bytes_data
++
++        self._test_body(send_body(), expected_data=bytes_data)
++
++    def test_unicode_body_iterable(self) -> None:
++        def send_body() -> typing.Iterable[str]:
++            yield "thisshouldbeonechunk\r\näöüß\xFF"
++
++        self._test_body(
++            send_body(),
++            expected_data=b"thisshouldbeonechunk\r\n\xc3\xa4\xc3\xb6\xc3\xbc\xc3\x9f\xc3\xbf",
++        )
+ 
+     def test_empty_body(self) -> None:
+         self._test_body(None)

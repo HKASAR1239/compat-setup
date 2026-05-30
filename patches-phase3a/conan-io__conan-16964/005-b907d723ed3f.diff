@@ -1,0 +1,267 @@
+diff --git a/conan/tools/cmake/cmakedeps/templates/target_configuration.py b/conan/tools/cmake/cmakedeps/templates/target_configuration.py
+index cf088e0adbe..f997f4d2270 100644
+--- a/conan/tools/cmake/cmakedeps/templates/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps/templates/target_configuration.py
+@@ -29,6 +29,11 @@ def context(self):
+         is_win = self.conanfile.settings.get_safe("os") == "Windows"
+         auto_link = self.cmakedeps.get_property("cmake_set_interface_link_directories",
+                                                 self.conanfile, check_type=bool)
++        if self.conanfile.cpp_info.exe:
++            exe_location = self.conanfile.cpp_info.location.replace("\\", "/")
++            pfolder_var_name = "{}_PACKAGE_FOLDER{}".format(self.pkg_name, self.config_suffix)
++        else:
++            exe_location = pfolder_var_name = ""
+         return {"pkg_name": self.pkg_name,
+                 "root_target_name": self.root_target_name,
+                 "config_suffix": self.config_suffix,
+@@ -37,7 +42,8 @@ def context(self):
+                 "components_names": components_names,
+                 "configuration": self.cmakedeps.configuration,
+                 "set_interface_link_directories": auto_link and is_win,
+-                "cpp_info": self.conanfile.cpp_info}
++                "exe": self.conanfile.cpp_info.exe,
++                "exe_location": f"${{{pfolder_var_name}}}/{exe_location}"}
+ 
+     @property
+     def template(self):
+@@ -130,10 +136,11 @@ def template(self):
+             {%- endif %}
+ 
+             # Exe information
+-            {% for exe_name, exe_info in cpp_info.exes.items() %}
+-            add_executable({{pkg_name}}::{{exe_name}} IMPORTED)
+-            set_target_properties({{pkg_name}}::{{exe_name}} PROPERTIES IMPORTED_LOCATION${config_suffix} "{{exe_info["location"]}}")
+-            {%- endfor %}
++            {% if exe %}
++            message(STATUS "Conan: Target declared imported executable '{{pkg_name}}::{{exe}}'")
++            add_executable({{pkg_name}}::{{exe}} IMPORTED)
++            set_target_properties({{pkg_name}}::{{exe}} PROPERTIES IMPORTED_LOCATION${config_suffix} "{{exe_location}}")
++            {%- endif %}
+ 
+         {%- else %}
+ 
+diff --git a/conan/tools/cmake/cmakedeps/templates/target_data.py b/conan/tools/cmake/cmakedeps/templates/target_data.py
+index 54da15ddfe6..3500058a03a 100644
+--- a/conan/tools/cmake/cmakedeps/templates/target_data.py
++++ b/conan/tools/cmake/cmakedeps/templates/target_data.py
+@@ -319,7 +319,7 @@ def join_defines(values, prefix=""):
+         self.compile_definitions = join_defines(cpp_info.defines)
+         self.library_type = library_type
+         self.is_host_windows = "1" if is_host_windows else "0"
+-        self.exes = cpp_info.exes
++        self.exe = cpp_info.exe
+ 
+         # For modern CMake targets we need to prepare a list to not
+         # loose the elements in the list by replacing " " with ";". Example "-framework Foundation"
+diff --git a/conans/model/build_info.py b/conans/model/build_info.py
+index 00bb5d67c6c..4e2523f9a41 100644
+--- a/conans/model/build_info.py
++++ b/conans/model/build_info.py
+@@ -77,7 +77,8 @@ def __init__(self, set_defaults=False):
+         self._sharedlinkflags = None  # linker flags
+         self._exelinkflags = None  # linker flags
+         self._objects = None  # linker flags
+-        self._exes = None  # application executables
++        self.exe = None  # application executable, only 1 allowed, following CPS
++        self.location = None
+ 
+         self._sysroot = None
+         self._requires = None
+@@ -113,7 +114,7 @@ def serialize(self):
+             "sysroot": self._sysroot,
+             "requires": self._requires,
+             "properties": self._properties,
+-            "exes": self._exes,
++            "exe": self.exe,
+         }
+ 
+     @staticmethod
+@@ -260,16 +261,6 @@ def full_libs(self):
+     def libs(self, value):
+         self._libs = value
+ 
+-    @property
+-    def exes(self):
+-        if self._exes is None:
+-            self._exes = {}
+-        return self._exes
+-
+-    @exes.setter
+-    def exes(self, value):
+-        self._exes = value
+-
+     @property
+     def defines(self):
+         if self._defines is None:
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py
+index 5b19a9fc8f4..56e12957bc0 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py
+@@ -6,11 +6,11 @@
+ 
+ 
+ @pytest.mark.tool("cmake")
+-def test_exes():
++def test_exe():
+     conanfile = textwrap.dedent(r"""
+         import os
+         from conan import ConanFile
+-        from conan.tools.cmake import CMake, cmake_layout
++        from conan.tools.cmake import CMake
+ 
+         class Test(ConanFile):
+             name = "mytool"
+@@ -25,21 +25,20 @@ def build(self):
+                 cmake.configure()
+                 cmake.build()
+ 
+-            def layout(self):
+-                cmake_layout(self)
+-
+             def package(self):
+                 cmake = CMake(self)
+                 cmake.install()
+ 
+             def package_info(self):
+-                location =  os.path.join(self.package_folder, "bin/mytool.exe").replace("\\", "/")
+-                self.cpp_info.exes = {"myexe": {"location": location}}
++                self.cpp_info.exe = "myexe"
++                self.cpp_info.location = os.path.join("bin", "mytool")
+         """)
+     main = textwrap.dedent("""
++        #include <iostream>
+         #include <fstream>
+ 
+         int main() {
++            std::cout << "Mytool generating out.c!!!!!" << std::endl;
+             std::ofstream f("out.c");
+         }
+         """)
+@@ -75,12 +74,112 @@ def build(self):
+         project(consumer C)
+ 
+         find_package(mytool)
+-        add_custom_command(OUTPUT out.c
+-                           COMMAND mytool::myexe)
++        add_custom_command(OUTPUT out.c COMMAND mytool::myexe)
+         add_library(myLib out.c)
+         """)
+     c.save({"conanfile.py": consumer,
+             "CMakeLists.txt": cmake}, clean_first=True)
+     c.run("build .")
+-    print(c.out)
++    assert "Conan: Target declared 'mytool::mytool'" in c.out
++    assert "Conan: Target declared imported executable 'mytool::myexe'" in c.out
++    assert "Mytool generating out.c!!!!!" in c.out
++
++
++@pytest.mark.tool("cmake")
++def test_exe_components():
++    conanfile = textwrap.dedent(r"""
++        import os
++        from conan import ConanFile
++        from conan.tools.cmake import CMake
++
++        class Test(ConanFile):
++            name = "mytool"
++            version = "0.1"
++            package_type = "application"
++            settings = "os", "arch", "compiler", "build_type"
++            generators = "CMakeToolchain"
++            exports_sources = "*"
++
++            def build(self):
++                cmake = CMake(self)
++                cmake.configure()
++                cmake.build()
++
++            def package(self):
++                cmake = CMake(self)
++                cmake.install()
++
++            def package_info(self):
++                self.cpp_info.components["my1exe"].exe = "mytool1"
++                self.cpp_info.components["my1exe"].location = os.path.join("bin", "mytool2")
++                self.cpp_info.components["my2exe"].exe = "mytool2"
++                self.cpp_info.components["my1exe"].location = os.path.join("bin", "mytool2")
++        """)
++    main = textwrap.dedent("""
++        #include <iostream>
++        #include <fstream>
++
++        int main() {{
++            std::cout << "Mytool{number} generating out.c!!!!!" << std::endl;
++            std::ofstream f("out{number}.c");
++        }}
++        """)
++    cmake = textwrap.dedent("""
++        set(CMAKE_CXX_COMPILER_WORKS 1)
++        set(CMAKE_CXX_ABI_COMPILED 1)
++        cmake_minimum_required(VERSION 3.15)
++        project(proj CXX)
++
++        add_executable(mytool1 src/main1.cpp)
++        add_executable(mytool2 src/main2.cpp)
+ 
++        install(TARGETS mytool1 DESTINATION "." RUNTIME DESTINATION bin)
++        install(TARGETS mytool2 DESTINATION "." RUNTIME DESTINATION bin)
++        """)
++    c = TestClient()
++    c.save({"conanfile.py": conanfile,
++            "CMakeLists.txt": cmake,
++            "src/main1.cpp": main.format(number=1),
++            "src/main2.cpp": main.format(number=2)
++            })
++    c.run("create .")
++
++    consumer = textwrap.dedent("""
++        from conan import ConanFile
++        from conan.tools.cmake import CMakeDeps, CMakeToolchain, CMake, cmake_layout
++        class Consumer(ConanFile):
++            settings = "os", "compiler", "arch", "build_type"
++            tool_requires = "mytool/0.1"
++
++            def generate(self):
++                deps = CMakeDeps(self)
++                deps.build_context_activated = ["mytool"]
++                deps.generate()
++                tc = CMakeToolchain(self)
++                tc.generate()
++
++            def layout(self):
++                cmake_layout(self)
++            def build(self):
++                cmake = CMake(self)
++                cmake.configure()
++                cmake.build()
++        """)
++    cmake = textwrap.dedent("""
++        cmake_minimum_required(VERSION 3.15)
++        project(consumer C)
++
++        find_package(mytool)
++        add_custom_command(OUTPUT out1.c
++                           COMMAND mytool::my1exe)
++        add_custom_command(OUTPUT out2.c
++                           COMMAND mytool::my2exe)
++        add_library(myLib out1.c out2.c)
++        """)
++    c.save({"conanfile.py": consumer,
++            "CMakeLists.txt": cmake}, clean_first=True)
++    c.run("build .")
++    print(c.out)
++    assert "Conan: Target declared 'mytool::mytool'" in c.out
++    assert "Conan: Target declared imported executable 'mytool::myexe'" in c.out
++    assert "Mytool generating out.c!!!!!" in c.out
+diff --git a/test/functional/toolchains/cmake/test_cmaketoolchain_paths.py b/test/functional/toolchains/cmake/test_cmaketoolchain_paths.py
+index 2b46aeaceb8..935f4718459 100644
+--- a/test/functional/toolchains/cmake/test_cmaketoolchain_paths.py
++++ b/test/functional/toolchains/cmake/test_cmaketoolchain_paths.py
+@@ -222,6 +222,7 @@ def package_info(self):
+     client.save({"conanfile.py": conanfile,
+                  "CMakeLists.txt": cmake})
+     client.run("create . --name=hello --version=0.1 {}".format(settings))
++    print(client.out)
+ 
+     consumer = textwrap.dedent("""
+         cmake_minimum_required(VERSION 3.15)

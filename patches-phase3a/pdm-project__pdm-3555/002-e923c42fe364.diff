@@ -1,0 +1,31 @@
+diff --git a/news/3555.bugfix.md b/news/3555.bugfix.md
+new file mode 100644
+index 0000000000..eddaba3d72
+--- /dev/null
++++ b/news/3555.bugfix.md
+@@ -0,0 +1 @@
++Redact credentials in source urls in the log output, and inject credentials into the source url for uv sync command as well.
+diff --git a/src/pdm/_types.py b/src/pdm/_types.py
+index 384c3f053c..ae792316ac 100644
+--- a/src/pdm/_types.py
++++ b/src/pdm/_types.py
+@@ -136,18 +136,10 @@ class NotSetType:
+ @dc.dataclass(frozen=True)
+ class HiddenText:
+     secret: str
+-    redacted: str
++    redacted: str = dc.field(compare=False, hash=False)
+ 
+     def __str__(self) -> str:
+         return self.redacted
+ 
+     def __repr__(self) -> str:
+         return repr(str(self))
+-
+-    def __eq__(self, other: Any) -> bool:
+-        if type(self) is not type(other):
+-            return NotImplemented
+-
+-        # The string being used for redaction doesn't also have to match,
+-        # just the raw, original string.
+-        return self.secret == other.secret

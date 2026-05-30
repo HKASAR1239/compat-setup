@@ -1,0 +1,264 @@
+diff --git a/conan/tools/cmake/cmakedeps2/cmakedeps.py b/conan/tools/cmake/cmakedeps2/cmakedeps.py
+index 6e03dc41ffc..f3cfc2336e0 100644
+--- a/conan/tools/cmake/cmakedeps2/cmakedeps.py
++++ b/conan/tools/cmake/cmakedeps2/cmakedeps.py
+@@ -21,23 +21,18 @@
+ 
+ 
+ class CMakeDeps2:
+-    _conan_cmakedeps_paths = "conan_cmakedeps_paths.cmake"
+ 
+     def __init__(self, conanfile):
+         self._conanfile = conanfile
+-        self.arch = self._conanfile.settings.get_safe("arch")
+         self.configuration = str(self._conanfile.settings.build_type)
+ 
+-        # Activate the build config files for the specified libraries
++        # These are just for legacy compatibility, but not use at al
+         self.build_context_activated = []
+-        # By default, the build modules are generated for host context only
+         self.build_context_build_modules = []
+-        # If specified, the files/targets/variables for the build context will be renamed appending
+-        # a suffix. It is necessary in case of same require and build_require and will cause an error
+         self.build_context_suffix = {}
+-
+         # Enable/Disable checking if a component target exists or not
+         self.check_components_exist = False
++
+         self._properties = {}
+ 
+     def generate(self):
+@@ -46,7 +41,7 @@ def generate(self):
+         generator_files = self._content()
+         for generator_file, content in generator_files.items():
+             save(self._conanfile, generator_file, content)
+-        self._generate_paths()
++        _PathGenerator(self, self._conanfile).generate()
+ 
+     def _content(self):
+         host_req = self._conanfile.dependencies.host
+@@ -76,8 +71,7 @@ def _content(self):
+     def set_property(self, dep, prop, value, build_context=False):
+         """
+         Using this method you can overwrite the :ref:`property<CMakeDeps Properties>` values set by
+-        the Conan recipes from the consumer. This can be done for `cmake_file_name`, `cmake_target_name`,
+-        `cmake_find_mode`, `cmake_module_file_name` and `cmake_module_target_name` properties.
++        the Conan recipes from the consumer.
+ 
+         :param dep: Name of the dependency to set the :ref:`property<CMakeDeps Properties>`. For
+          components use the syntax: ``dep_name::component_name``.
+@@ -92,14 +86,13 @@ def set_property(self, dep, prop, value, build_context=False):
+ 
+     def get_property(self, prop, dep, comp_name=None, check_type=None):
+         dep_name = dep.ref.name
+-        build_suffix = "&build" if str(
+-            dep_name) in self.build_context_activated and dep.context == "build" else ""
++        build_suffix = "&build" if dep.context == "build" else ""
+         dep_comp = f"{str(dep_name)}::{comp_name}" if comp_name else f"{str(dep_name)}"
+         try:
+             value = self._properties[f"{dep_comp}{build_suffix}"][prop]
+             if check_type is not None and not isinstance(value, check_type):
+-                raise ConanException(
+-                    f'The expected type for {prop} is "{check_type.__name__}", but "{type(value).__name__}" was found')
++                raise ConanException(f'The expected type for {prop} is "{check_type.__name__}", '
++                                     f'but "{type(value).__name__}" was found')
+             return value
+         except KeyError:
+             return dep.cpp_info.get_property(prop, check_type=check_type) if not comp_name \
+@@ -132,7 +125,15 @@ def get_transitive_requires(self, conanfile):
+         # Prepared to filter transitive tool-requires with visible=True
+         return get_transitive_requires(self._conanfile, conanfile)
+ 
+-    def _generate_paths(self):
++
++class _PathGenerator:
++    _conan_cmakedeps_paths = "conan_cmakedeps_paths.cmake"
++
++    def __init__(self, cmakedeps, conanfile):
++        self._conanfile = conanfile
++        self._cmakedeps = cmakedeps
++
++    def generate(self):
+         template = textwrap.dedent("""\
+             {% for pkg_name, folder in pkg_paths.items() %}
+             set({{pkg_name}}_DIR "{{folder}}")
+@@ -151,11 +152,11 @@ def _generate_paths(self):
+         # content.append('set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)')
+         pkg_paths = {}
+         for req, dep in list(host_req.items()) + list(build_req.items()) + list(test_req.items()):
+-            cmake_find_mode = self.get_property("cmake_find_mode", dep)
++            cmake_find_mode = self._cmakedeps.get_property("cmake_find_mode", dep)
+             cmake_find_mode = cmake_find_mode or FIND_MODE_CONFIG
+             cmake_find_mode = cmake_find_mode.lower()
+ 
+-            pkg_name = self.get_cmake_filename(dep)
++            pkg_name = self._cmakedeps.get_cmake_filename(dep)
+             # https://cmake.org/cmake/help/v3.22/guide/using-dependencies/index.html
+             if cmake_find_mode == FIND_MODE_NONE:
+                 try:
+@@ -195,7 +196,7 @@ def _get_host_runtime_dirs(self):
+ 
+         is_win = self._conanfile.settings.get_safe("os") == "Windows"
+         for req in self._conanfile.dependencies.host.values():
+-            config = req.settings.get_safe("build_type", self.configuration)
++            config = req.settings.get_safe("build_type", self._cmakedeps.configuration)
+             cppinfo = req.cpp_info.aggregated_components()
+             runtime_dirs = cppinfo.bindirs if is_win else cppinfo.libdirs
+             for d in runtime_dirs:
+diff --git a/conan/tools/cmake/cmakedeps2/config.py b/conan/tools/cmake/cmakedeps2/config.py
+index 082bc44f274..445fb56a8a7 100644
+--- a/conan/tools/cmake/cmakedeps2/config.py
++++ b/conan/tools/cmake/cmakedeps2/config.py
+@@ -33,7 +33,6 @@ def _context(self):
+         # FIXME: Proper escaping of paths for CMake
+         # FIXME: build_module_paths coming from last config only
+         build_modules_paths = [f.replace("\\", "/") for f in build_modules_paths]
+-        # FIXME: Empty
+         global_cppinfo = self._conanfile.cpp_info.aggregated_components()
+         # FIXME: Proper escaping of paths for CMake and relativization
+         include_dirs = ";".join(i.replace("\\", "/") for i in global_cppinfo.includedirs)
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+index 24e6be28a93..318e3901c23 100644
+--- a/conan/tools/cmake/cmakedeps2/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -45,7 +45,9 @@ def _requires(self, info, components):
+             if required_pkg is None:  # Points to a component of same package
+                 dep_comp = components.get(required_comp)
+                 assert dep_comp, f"Component {required_comp} not found in {self._conanfile}"
+-                dep_target = dep_comp.get_property("cmake_target_name") or f"{pkg_name}::{required_comp}"
++                dep_target = self._cmakedeps.get_property("cmake_target_name", self._conanfile,
++                                                          required_comp)
++                dep_target = dep_target or f"{pkg_name}::{required_comp}"
+                 result.append(dep_target)
+             else:  # Different package
+                 try:
+@@ -53,17 +55,16 @@ def _requires(self, info, components):
+                 except KeyError:  # The transitive dep might have been skipped
+                     pass
+                 else:
+-                    # TODO: Missing cmake_target_name for req
+                     dep_comp = dep.cpp_info.components.get(required_comp)
+                     if dep_comp is None:
+                         # It must be the interface pkgname::pkgname target
+                         assert required_pkg == required_comp
+-                        dep_target = f"{required_pkg}::{required_comp}"
+-                        result.append(dep_target)
++                        comp = None
+                     else:
+-                        dep_cmake = dep_comp.get_property("cmake_target_name")
+-                        dep_target = dep_cmake or f"{required_pkg}::{required_comp}"
+-                        result.append(dep_target)
++                        comp = required_comp
++                    dep_target = self._cmakedeps.get_property("cmake_target_name", dep, comp)
++                    dep_target = dep_target or f"{required_pkg}::{required_comp}"
++                    result.append(dep_target)
+         return result
+ 
+     @property
+@@ -98,13 +99,16 @@ def _get_libs(self, cpp_info, pkg_name, pkg_folder, pkg_folder_var) -> dict:
+         libs = {}
+         if cpp_info.has_components:
+             for name, component in cpp_info.components.items():
+-                target_name = component.get_property("cmake_target_name") or f"{pkg_name}::{name}"
++                target_name = self._cmakedeps.get_property("cmake_target_name", self._conanfile,
++                                                           name)
++                target_name = target_name or f"{pkg_name}::{name}"
+                 target = self._get_cmake_lib(component, cpp_info.components, pkg_folder,
+                                              pkg_folder_var)
+                 if target is not None:
+                     libs[target_name] = target
+         else:
+-            target_name = cpp_info.get_property("cmake_target_name") or f"{pkg_name}::{pkg_name}"
++            target_name = self._cmakedeps.get_property("cmake_target_name", self._conanfile)
++            target_name = target_name or f"{pkg_name}::{pkg_name}"
+             target = self._get_cmake_lib(cpp_info, None, pkg_folder, pkg_folder_var)
+             if target is not None:
+                 libs[target_name] = target
+@@ -151,26 +155,28 @@ def _get_cmake_lib(self, info, components, pkg_folder, pkg_folder_var):
+ 
+         return target
+ 
+-    @staticmethod
+-    def _add_root_lib_target(libs, pkg_name, cpp_info):
++    def _add_root_lib_target(self, libs, pkg_name, cpp_info):
+         """
+         Addd a new pkgname::pkgname INTERFACE target that depends on default_components or
+         on all other library targets (not exes)
+         It will not be added if there exists already a pkgname::pkgname target.
+         """
+-        if libs and f"{pkg_name}::{pkg_name}" not in libs:
++        root_target_name = self._cmakedeps.get_property("cmake_target_name", self._conanfile)
++        root_target_name = root_target_name or f"{pkg_name}::{pkg_name}"
++        if libs and root_target_name not in libs:
+             # Add a generic interface target for the package depending on the others
+             if cpp_info.default_components is not None:
+                 all_requires = []
+                 for defaultc in cpp_info.default_components:
+-                    comp = cpp_info.components.get(defaultc)
+-                    comp_name = comp.get_property("cmake_target_name") or f"{pkg_name}::{defaultc}"
++                    target_name = self._cmakedeps.get_property("cmake_target_name", self._conanfile,
++                                                               defaultc)
++                    comp_name = target_name or f"{pkg_name}::{defaultc}"
+                     all_requires.append(comp_name)
+                 all_requires = " ".join(all_requires)
+             else:
+                 all_requires = " ".join(libs.keys())
+-            libs[f"{pkg_name}::{pkg_name}"] = {"type": "INTERFACE",
+-                                               "requires": all_requires}
++            libs[root_target_name] = {"type": "INTERFACE",
++                                      "requires": all_requires}
+ 
+     def _get_exes(self, cpp_info, pkg_name, pkg_folder, pkg_folder_var):
+         exes = {}
+@@ -180,14 +186,17 @@ def _get_exes(self, cpp_info, pkg_name, pkg_folder, pkg_folder_var):
+             assert not cpp_info.libs, "Package has components and libs"
+             for name, comp in cpp_info.components.items():
+                 if comp.exe or comp.type is PackageType.APP:
+-                    target = comp.get_property("cmake_target_name") or f"{pkg_name}::{name}"
++                    target_name = self._cmakedeps.get_property("cmake_target_name", self._conanfile,
++                                                               name)
++                    target = target_name or f"{pkg_name}::{name}"
+                     exe_location = self._path(comp.location, pkg_folder, pkg_folder_var)
+                     exes[target] = exe_location
+         else:
+             if cpp_info.exe:
+                 assert not cpp_info.libs, "Package has exe and libs"
+                 assert cpp_info.location, "Package has exe and no location"
+-                target = cpp_info.get_property("cmake_target_name") or f"{pkg_name}::{pkg_name}"
++                target_name = self._cmakedeps.get_property("cmake_target_name", self._conanfile)
++                target = target_name or f"{pkg_name}::{pkg_name}"
+                 exe_location = self._path(cpp_info.location, pkg_folder, pkg_folder_var)
+                 exes[target] = exe_location
+ 
+@@ -269,13 +278,15 @@ def _template(self):
+                      $<$<COMPILE_LANGUAGE:C>:{{config_wrapper(config, lib_info["cflags"])}}>)
+         {% endif %}
+         {% if lib_info.get("sharedlinkflags") %}
++        {% set linkflags = config_wrapper(config, lib_info["sharedlinkflags"]) %}
+         set_property(TARGET {{lib}} APPEND PROPERTY INTERFACE_LINK_OPTIONS
+-                     "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>:{{config_wrapper(config, lib_info["sharedlinkflags"])}}>"
+-                     "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>:{{config_wrapper(config, lib_info["sharedlinkflags"])}}>")
++                     "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>:{{linkflags}}>"
++                     "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>:{{linkflags}}>")
+         {% endif %}
+         {% if lib_info.get("exelinkflags") %}
++        {% set exeflags = config_wrapper(config, lib_info["exelinkflags"]) %}
+         set_property(TARGET {{lib}} APPEND PROPERTY INTERFACE_LINK_OPTIONS
+-                     "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:{{config_wrapper(config, lib_info["exelinkflags"])}}>")
++                     "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:{{exeflags}}>")
+         {% endif %}
+ 
+         {% if lib_info.get("location") %}
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+index c9a8b0c0e14..e560a320098 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+@@ -580,7 +580,7 @@ def package_info(self):
+         assert "Conan: Target declared imported STATIC library 'matrix::_vector'" in c.out
+         assert "Conan: Target declared imported STATIC library 'matrix::_module'" in c.out
+         assert "Conan: Target declared imported INTERFACE library 'MyMatrix::MyMatrix'" in c.out
+-        assert "Conan: Target declared imported INTERFACE library 'matrix::matrix'" in c.out
++        assert "matrix::matrix" not in c.out
+ 
+         assert "vector: Release!" in c.out
+         assert "module: Release!" in c.out

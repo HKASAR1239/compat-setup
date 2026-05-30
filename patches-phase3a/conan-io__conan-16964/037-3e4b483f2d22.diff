@@ -1,0 +1,61 @@
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+index 37e5a55d42a..2cc94afe5dc 100644
+--- a/conan/tools/cmake/cmakedeps2/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -115,6 +115,7 @@ def _get_cmake_lib(self, info, components, pkg_folder, pkg_folder_var):
+         requires = " ".join(self._requires(info, components))
+         # TODO: Missing escaping?
+         # TODO: Missing link language
++        # FIXME: Filter by traits!!!!!
+         system_libs = " ".join(info.system_libs)
+         target = {"type": "INTERFACE",
+                   "includedirs": includedirs,
+@@ -262,12 +263,12 @@ def _template(self):
+         {% endif %}
+         {% if lib_info.get("sharedlinkflags") %}
+         set_property(TARGET {{lib}} APPEND PROPERTY INTERFACE_LINK_OPTIONS
+-                      $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>:{{config_wrapper(config, lib_info["sharedlinkflags"])}}>
+-                      $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>:{{config_wrapper(config, lib_info["sharedlinkflags"])}}>)
++                     "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>:{{config_wrapper(config, lib_info["sharedlinkflags"])}}>"
++                     "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>:{{config_wrapper(config, lib_info["sharedlinkflags"])}}>")
+         {% endif %}
+         {% if lib_info.get("exelinkflags") %}
+         set_property(TARGET {{lib}} APPEND PROPERTY INTERFACE_LINK_OPTIONS
+-                      $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:{{config_wrapper(config, lib_info["exelinkflags"])}}>)
++                     "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:{{config_wrapper(config, lib_info["exelinkflags"])}}>")
+         {% endif %}
+ 
+         {% if lib_info.get("location") %}
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+index 217819cc073..2e48296721c 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+@@ -560,7 +560,7 @@ def package_info(self):
+ 
+ @pytest.mark.tool("cmake")
+ class TestHeaders:
+-    def test_libs(self, matrix_client):
++    def test_header_lib(self, matrix_client):
+         c = matrix_client
+         conanfile = textwrap.dedent("""
+             from conan import ConanFile
+@@ -576,7 +576,8 @@ def package(self):
+                 def package_id(self):
+                     self.info.clear()
+                 def package_info(self):
+-                    self.cpp_info.defines = ["MY_MATRIX_HEADERS_DEFINE=1"]
++                    self.cpp_info.defines = ["MY_MATRIX_HEADERS_DEFINE=1",
++                                             "MY_MATRIX_HEADERS_DEFINE2=1"]
+                     # Few flags to cover that CMakeDeps doesn't crash with them
+                     if self.settings.compiler == "msvc":
+                         self.cpp_info.cxxflags = ["/Zc:__cplusplus"]
+@@ -595,6 +596,9 @@ def package_info(self):
+             #ifndef MY_MATRIX_HEADERS_DEFINE
+             #error "Fatal error MY_MATRIX_HEADERS_DEFINE not defined"
+             #endif
++            #ifndef MY_MATRIX_HEADERS_DEFINE2
++            #error "Fatal error MY_MATRIX_HEADERS_DEFINE2 not defined"
++            #endif
+             #ifdef _WIN32
+               #define ENGINE_EXPORT __declspec(dllexport)
+             #else

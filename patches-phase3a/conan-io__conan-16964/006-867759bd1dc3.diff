@@ -1,0 +1,766 @@
+diff --git a/conan/tools/cmake/__init__.py b/conan/tools/cmake/__init__.py
+index d4123be7493..0447981e949 100644
+--- a/conan/tools/cmake/__init__.py
++++ b/conan/tools/cmake/__init__.py
+@@ -1,4 +1,5 @@
+ from conan.tools.cmake.toolchain.toolchain import CMakeToolchain
+ from conan.tools.cmake.cmake import CMake
+ from conan.tools.cmake.cmakedeps.cmakedeps import CMakeDeps
++from conan.tools.cmake.cmakedeps2.cmakedeps2 import CMakeDeps2
+ from conan.tools.cmake.layout import cmake_layout
+diff --git a/conan/tools/cmake/cmakedeps2/__init__.py b/conan/tools/cmake/cmakedeps2/__init__.py
+new file mode 100644
+index 00000000000..8b6329c26ed
+--- /dev/null
++++ b/conan/tools/cmake/cmakedeps2/__init__.py
+@@ -0,0 +1,4 @@
++FIND_MODE_MODULE = "module"
++FIND_MODE_CONFIG = "config"
++FIND_MODE_NONE = "none"
++FIND_MODE_BOTH = "both"
+diff --git a/conan/tools/cmake/cmakedeps2/cmakedeps2.py b/conan/tools/cmake/cmakedeps2/cmakedeps2.py
+new file mode 100644
+index 00000000000..b7a2ca5ef32
+--- /dev/null
++++ b/conan/tools/cmake/cmakedeps2/cmakedeps2.py
+@@ -0,0 +1,174 @@
++import textwrap
++
++import jinja2
++from jinja2 import Template
++
++from conan.api.output import Color
++from conan.internal import check_duplicated_generator
++from conan.tools.files import save
++from conan.errors import ConanException
++from conans.model.dependencies import get_transitive_requires
++
++
++class CMakeDeps2:
++
++    def __init__(self, conanfile):
++        self._conanfile = conanfile
++        self.arch = self._conanfile.settings.get_safe("arch")
++        self.configuration = str(self._conanfile.settings.build_type)
++
++        # Activate the build config files for the specified libraries
++        self.build_context_activated = []
++        # By default, the build modules are generated for host context only
++        self.build_context_build_modules = []
++        # If specified, the files/targets/variables for the build context will be renamed appending
++        # a suffix. It is necessary in case of same require and build_require and will cause an error
++        self.build_context_suffix = {}
++
++        # Enable/Disable checking if a component target exists or not
++        self.check_components_exist = False
++        self._properties = {}
++
++    def generate(self):
++        check_duplicated_generator(self, self._conanfile)
++        # Current directory is the generators_folder
++        generator_files = self._content()
++        for generator_file, content in generator_files.items():
++            save(self._conanfile, generator_file, content)
++
++    def _content(self):
++        host_req = self._conanfile.dependencies.host
++        build_req = self._conanfile.dependencies.direct_build
++        test_req = self._conanfile.dependencies.test
++
++        # Check if the same package is at host and build and the same time
++        activated_br = {r.ref.name for r in build_req.values()
++                        if r.ref.name in self.build_context_activated}
++        common_names = {r.ref.name for r in host_req.values()}.intersection(activated_br)
++        for common_name in common_names:
++            suffix = self.build_context_suffix.get(common_name)
++            if not suffix:
++                raise ConanException("The package '{}' exists both as 'require' and as "
++                                     "'build require'. You need to specify a suffix using the "
++                                     "'build_context_suffix' attribute at the CMakeDeps "
++                                     "generator.".format(common_name))
++
++        # Iterate all the transitive requires
++        direct_configs = []
++        for require, dep in list(host_req.items()) + list(build_req.items()) + list(test_req.items()):
++            # Require is not used at the moment, but its information could be used,
++            # and will be used in Conan 2.0
++            # Filter the build_requires not activated with cmakedeps.build_context_activated
++            if require.build and dep.ref.name not in self.build_context_activated:
++                continue
++
++            cmake_find_mode = self.get_property("cmake_find_mode", dep)
++            cmake_find_mode = cmake_find_mode or FIND_MODE_CONFIG
++            cmake_find_mode = cmake_find_mode.lower()
++            # Skip from the requirement
++            if cmake_find_mode == FIND_MODE_NONE:
++                # Skip the generation of config files for this node, it will be located externally
++                continue
++
++            if cmake_find_mode in (FIND_MODE_CONFIG, FIND_MODE_BOTH):
++                self._generate_files(require, dep, ret, find_module_mode=False)
++
++            if cmake_find_mode in (FIND_MODE_MODULE, FIND_MODE_BOTH):
++                self._generate_files(require, dep, ret, find_module_mode=True)
++
++            if require.direct:  # aggregate config information for user convenience
++                find_module_mode = True if cmake_find_mode == FIND_MODE_MODULE else False
++                config = ConfigTemplate(self, require, dep, find_module_mode)
++                direct_configs.append(config)
++
++        if direct_configs:
++            # Some helpful verbose messages about generated files
++            msg = ["CMakeDeps necessary find_package() and targets for your CMakeLists.txt"]
++            for config in direct_configs:
++                msg.append(f"    find_package({config.file_name})")
++            targets = ' '.join(c.root_target_name for c in direct_configs)
++            msg.append(f"    target_link_libraries(... {targets})")
++            if self._conanfile._conan_is_consumer:
++                self._conanfile.output.info("\n".join(msg), fg=Color.CYAN)
++            else:
++                self._conanfile.output.verbose("\n".join(msg))
++
++        return ret
++
++    def _generate_files(self, require, dep, ret):
++        config_version = ConfigVersionTemplate(self, require, dep)
++        ret[config_version.filename] = config_version.render()
++
++        target_configuration = TargetConfigurationTemplate(self, require, dep, find_module_mode)
++        ret[target_configuration.filename] = target_configuration.render()
++
++        targets = TargetsTemplate(self, require, dep, find_module_mode)
++        ret[targets.filename] = targets.render()
++
++        config = ConfigTemplate(self, require, dep, find_module_mode)
++        # Only the latest configuration BUILD_MODULES and additional_variables will be used
++        # in multi-config they will be overwritten by the latest install
++        ret[config.filename] = config.render()
++
++    def set_property(self, dep, prop, value, build_context=False):
++        """
++        Using this method you can overwrite the :ref:`property<CMakeDeps Properties>` values set by
++        the Conan recipes from the consumer. This can be done for `cmake_file_name`, `cmake_target_name`,
++        `cmake_find_mode`, `cmake_module_file_name` and `cmake_module_target_name` properties.
++
++        :param dep: Name of the dependency to set the :ref:`property<CMakeDeps Properties>`. For
++         components use the syntax: ``dep_name::component_name``.
++        :param prop: Name of the :ref:`property<CMakeDeps Properties>`.
++        :param value: Value of the property. Use ``None`` to invalidate any value set by the
++         upstream recipe.
++        :param build_context: Set to ``True`` if you want to set the property for a dependency that
++         belongs to the build context (``False`` by default).
++        """
++        build_suffix = "&build" if build_context else ""
++        self._properties.setdefault(f"{dep}{build_suffix}", {}).update({prop: value})
++
++    def get_property(self, prop, dep, comp_name=None, check_type=None):
++        dep_name = dep.ref.name
++        build_suffix = "&build" if str(
++            dep_name) in self.build_context_activated and dep.context == "build" else ""
++        dep_comp = f"{str(dep_name)}::{comp_name}" if comp_name else f"{str(dep_name)}"
++        try:
++            value = self._properties[f"{dep_comp}{build_suffix}"][prop]
++            if check_type is not None and not isinstance(value, check_type):
++                raise ConanException(
++                    f'The expected type for {prop} is "{check_type.__name__}", but "{type(value).__name__}" was found')
++            return value
++        except KeyError:
++            return dep.cpp_info.get_property(prop, check_type=check_type) if not comp_name \
++                else dep.cpp_info.components[comp_name].get_property(prop, check_type=check_type)
++
++    def get_cmake_package_name(self, dep, module_mode=None):
++        """Get the name of the file for the find_package(XXX)"""
++        # This is used by CMakeDeps to determine:
++        # - The filename to generate (XXX-config.cmake or FindXXX.cmake)
++        # - The name of the defined XXX_DIR variables
++        # - The name of transitive dependencies for calls to find_dependency
++        if module_mode and self.get_find_mode(dep) in [FIND_MODE_MODULE, FIND_MODE_BOTH]:
++            ret = self.get_property("cmake_module_file_name", dep)
++            if ret:
++                return ret
++        ret = self.get_property("cmake_file_name", dep)
++        return ret or dep.ref.name
++
++    @property
++    def file_name(self):
++        return self.get_cmake_package_name(conanfile, module_mode=self.generating_module) + self.suffix
++
++    def get_find_mode(self, dep):
++        """
++        :param dep: requirement
++        :return: "none" or "config" or "module" or "both" or "config" when not set
++        """
++        tmp = self.get_property("cmake_find_mode", dep)
++        if tmp is None:
++            return "config"
++        return tmp.lower()
++
++    def get_transitive_requires(self, conanfile):
++        # Prepared to filter transitive tool-requires with visible=True
++        return get_transitive_requires(self._conanfile, conanfile)
+diff --git a/conan/tools/cmake/cmakedeps2/config.py b/conan/tools/cmake/cmakedeps2/config.py
+new file mode 100644
+index 00000000000..c1269efe23c
+--- /dev/null
++++ b/conan/tools/cmake/cmakedeps2/config.py
+@@ -0,0 +1,52 @@
++import textwrap
++
++
++class ConfigTemplate2:
++    """
++    FooConfig.cmake
++    foo-config.cmake
++    """
++    @property
++    def filename(self):
++        if self.file_name == self.file_name.lower():
++            return "{}-config.cmake".format(self.file_name)
++        else:
++            return "{}Config.cmake".format(self.file_name)
++
++    @property
++    def context(self):
++        targets_include = "" if not self.generating_module else "module-"
++        targets_include += "{}Targets.cmake".format(self.file_name)
++        return {"is_module": self.generating_module,
++                "version": self.conanfile.ref.version,
++                "file_name":  self.file_name,
++                "pkg_name": self.pkg_name,
++                "config_suffix": self.config_suffix,
++                "targets_include_file": targets_include}
++
++    @property
++    def template(self):
++        return textwrap.dedent("""\
++        {%- macro pkg_var(pkg_name, var, config_suffix) -%}
++             {{'${'+pkg_name+'_'+var+config_suffix+'}'}}
++        {%- endmacro -%}
++        ########## MACROS ###########################################################################
++        #############################################################################################
++
++        # Requires CMake > 3.15
++        if(${CMAKE_VERSION} VERSION_LESS "3.15")
++            message(FATAL_ERROR "The 'CMakeDeps' generator only works with CMake >= 3.15")
++        endif()
++
++        include(${CMAKE_CURRENT_LIST_DIR}/{{ targets_include_file }})
++        include(CMakeFindDependencyMacro)
++
++        check_build_type_defined()
++
++        foreach(_DEPENDENCY {{ pkg_var(pkg_name, 'FIND_DEPENDENCY_NAMES', '') }} )
++            # Check that we have not already called a find_package with the transitive dependency
++            if(NOT {{ '${_DEPENDENCY}' }}_FOUND)
++                find_dependency({{ '${_DEPENDENCY}' }} REQUIRED ${${_DEPENDENCY}_FIND_MODE})
++            endif()
++        endforeach()
++        """)
+diff --git a/conan/tools/cmake/cmakedeps2/config_version.py b/conan/tools/cmake/cmakedeps2/config_version.py
+new file mode 100644
+index 00000000000..33fb10b7131
+--- /dev/null
++++ b/conan/tools/cmake/cmakedeps2/config_version.py
+@@ -0,0 +1,96 @@
++import textwrap
++
++from conan.errors import ConanException
++
++
++class ConfigVersionTemplate2:
++    """
++    foo-config-version.cmake
++    """
++    def __init__(self, cmakedeps, conanfile):
++        self._cmakedeps = cmakedeps
++        self._conanfile = conanfile
++
++    @property
++    def filename(self):
++        if self.file_name == self.file_name.lower():
++            return "{}-config-version.cmake".format(self.file_name)
++        else:
++            return "{}ConfigVersion.cmake".format(self.file_name)
++
++    @property
++    def context(self):
++        policy = self._cmakedeps.get_property("cmake_config_version_compat", self._conanfile)
++        if policy is None:
++            policy = "SameMajorVersion"
++        if policy not in ("AnyNewerVersion", "SameMajorVersion", "SameMinorVersion", "ExactVersion"):
++            raise ConanException(f"Unknown cmake_config_version_compat={policy} in {self._conanfile}")
++        version = self._cmakedeps.get_property("system_package_version", self._conanfile)
++        version = version or self._conanfile.ref.version
++        return {"version": version,
++                "policy": policy}
++
++    @property
++    def template(self):
++        # https://gitlab.kitware.com/cmake/cmake/blob/master/Modules/BasicConfigVersion-SameMajorVersion.cmake.in
++        # This will be at XXX-config-version.cmake
++        # AnyNewerVersion|SameMajorVersion|SameMinorVersion|ExactVersion
++        ret = textwrap.dedent("""\
++            set(PACKAGE_VERSION "{{ version }}")
++
++            if(PACKAGE_VERSION VERSION_LESS PACKAGE_FIND_VERSION)
++                set(PACKAGE_VERSION_COMPATIBLE FALSE)
++            else()
++                {% if policy == "AnyNewerVersion" %}
++                set(PACKAGE_VERSION_COMPATIBLE TRUE)
++                {% elif policy == "SameMajorVersion" %}
++                if("{{ version }}" MATCHES "^([0-9]+)\\\\.")
++                    set(CVF_VERSION_MAJOR {{ '${CMAKE_MATCH_1}' }})
++                else()
++                    set(CVF_VERSION_MAJOR "{{ version }}")
++                endif()
++
++                if(PACKAGE_FIND_VERSION_MAJOR STREQUAL CVF_VERSION_MAJOR)
++                    set(PACKAGE_VERSION_COMPATIBLE TRUE)
++                else()
++                    set(PACKAGE_VERSION_COMPATIBLE FALSE)
++                endif()
++                {% elif policy == "SameMinorVersion" %}
++                if("{{ version }}" MATCHES "^([0-9]+)\\.([0-9]+)")
++                    set(CVF_VERSION_MAJOR "${CMAKE_MATCH_1}")
++                    set(CVF_VERSION_MINOR "${CMAKE_MATCH_2}")
++                else()
++                    set(CVF_VERSION_MAJOR "{{ version }}")
++                    set(CVF_VERSION_MINOR "")
++                endif()
++                if((PACKAGE_FIND_VERSION_MAJOR STREQUAL CVF_VERSION_MAJOR) AND
++                    (PACKAGE_FIND_VERSION_MINOR STREQUAL CVF_VERSION_MINOR))
++                  set(PACKAGE_VERSION_COMPATIBLE TRUE)
++                else()
++                  set(PACKAGE_VERSION_COMPATIBLE FALSE)
++                endif()
++                {% elif policy == "ExactVersion" %}
++                if("{{ version }}" MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
++                    set(CVF_VERSION_MAJOR "${CMAKE_MATCH_1}")
++                    set(CVF_VERSION_MINOR "${CMAKE_MATCH_2}")
++                    set(CVF_VERSION_MINOR "${CMAKE_MATCH_3}")
++                else()
++                    set(CVF_VERSION_MAJOR "{{ version }}")
++                    set(CVF_VERSION_MINOR "")
++                    set(CVF_VERSION_PATCH "")
++                endif()
++                if((PACKAGE_FIND_VERSION_MAJOR STREQUAL CVF_VERSION_MAJOR) AND
++                    (PACKAGE_FIND_VERSION_MINOR STREQUAL CVF_VERSION_MINOR) AND
++                    (PACKAGE_FIND_VERSION_PATCH STREQUAL CVF_VERSION_PATCH))
++                  set(PACKAGE_VERSION_COMPATIBLE TRUE)
++                else()
++                  set(PACKAGE_VERSION_COMPATIBLE FALSE)
++                endif()
++                {% endif %}
++
++                if(PACKAGE_FIND_VERSION STREQUAL PACKAGE_VERSION)
++                    set(PACKAGE_VERSION_EXACT TRUE)
++                endif()
++            endif()
++            """)
++        return ret
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+new file mode 100644
+index 00000000000..fb663965e68
+--- /dev/null
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -0,0 +1,269 @@
++import textwrap
++
++from conan.tools.cmake.cmakedeps.templates import CMakeDepsFileTemplate
++
++"""
++
++FooTarget-release.cmake
++
++"""
++
++
++class TargetConfigurationTemplate2:
++
++    @property
++    def filename(self):
++        name = "" if not self.generating_module else "module-"
++        name += "{}-Target-{}.cmake".format(self.file_name, self.cmakedeps.configuration.lower())
++        return name
++
++    @property
++    def context(self):
++        deps_targets_names = self.get_deps_targets_names() \
++            if not self.require.build else []
++
++        components_targets_names = self.get_declared_components_targets_names()
++        components_names = [(components_target_name.replace("::", "_"), components_target_name)
++                            for components_target_name in components_targets_names]
++
++        is_win = self.conanfile.settings.get_safe("os") == "Windows"
++        auto_link = self.cmakedeps.get_property("cmake_set_interface_link_directories",
++                                                self.conanfile, check_type=bool)
++        if self.conanfile.cpp_info.exe:
++            exe_location = self.conanfile.cpp_info.location.replace("\\", "/")
++            pfolder_var_name = "{}_PACKAGE_FOLDER{}".format(self.pkg_name, self.config_suffix)
++        else:
++            exe_location = pfolder_var_name = ""
++        return {"pkg_name": self.pkg_name,
++                "root_target_name": self.root_target_name,
++                "config_suffix": self.config_suffix,
++                "config": self.configuration.upper(),
++                "deps_targets_names": ";".join(deps_targets_names),
++                "components_names": components_names,
++                "configuration": self.cmakedeps.configuration,
++                "set_interface_link_directories": auto_link and is_win,
++                "exe": self.conanfile.cpp_info.exe,
++                "exe_location": f"${{{pfolder_var_name}}}/{exe_location}"}
++
++    @property
++    def template(self):
++        return textwrap.dedent("""\
++        # Avoid multiple calls to find_package to append duplicated properties to the targets
++        include_guard()
++
++        {%- macro comp_var(pkg_name, comp_name, var, config_suffix) -%}
++            {{'${'+pkg_name+'_'+comp_name+'_'+var+config_suffix+'}'}}
++        {%- endmacro -%}
++        {%- macro pkg_var(pkg_name, var, config_suffix) -%}
++            {{'${'+pkg_name+'_'+var+config_suffix+'}'}}
++        {%- endmacro -%}
++
++        ########### VARIABLES #######################################################################
++        #############################################################################################
++        set({{ pkg_name }}_FRAMEWORKS_FOUND{{ config_suffix }} "") # Will be filled later
++        conan_find_apple_frameworks({{ pkg_name }}_FRAMEWORKS_FOUND{{ config_suffix }} "{{ pkg_var(pkg_name, 'FRAMEWORKS', config_suffix) }}" "{{ pkg_var(pkg_name, 'FRAMEWORK_DIRS', config_suffix) }}")
++
++        set({{ pkg_name }}_LIBRARIES_TARGETS "") # Will be filled later
++
++
++        ######## Create an interface target to contain all the dependencies (frameworks, system and conan deps)
++        if(NOT TARGET {{ pkg_name+'_DEPS_TARGET'}})
++            add_library({{ pkg_name+'_DEPS_TARGET'}} INTERFACE IMPORTED)
++        endif()
++
++        set_property(TARGET {{ pkg_name + '_DEPS_TARGET'}}
++                     APPEND PROPERTY INTERFACE_LINK_LIBRARIES
++                     $<$<CONFIG:{{configuration}}>:{{ pkg_var(pkg_name, 'FRAMEWORKS_FOUND', config_suffix) }}>
++                     $<$<CONFIG:{{configuration}}>:{{ pkg_var(pkg_name, 'SYSTEM_LIBS', config_suffix) }}>
++                     $<$<CONFIG:{{configuration}}>:{{ deps_targets_names }}>)
++
++        ####### Find the libraries declared in cpp_info.libs, create an IMPORTED target for each one and link the
++        ####### {{pkg_name}}_DEPS_TARGET to all of them
++        conan_package_library_targets("{{ pkg_var(pkg_name, 'LIBS', config_suffix) }}"    # libraries
++                                      "{{ pkg_var(pkg_name, 'LIB_DIRS', config_suffix) }}" # package_libdir
++                                      "{{ pkg_var(pkg_name, 'BIN_DIRS', config_suffix) }}" # package_bindir
++                                      "{{ pkg_var(pkg_name, 'LIBRARY_TYPE', config_suffix) }}"
++                                      "{{ pkg_var(pkg_name, 'IS_HOST_WINDOWS', config_suffix) }}"
++                                      {{ pkg_name + '_DEPS_TARGET'}}
++                                      {{ pkg_name }}_LIBRARIES_TARGETS  # out_libraries_targets
++                                      "{{ config_suffix }}"
++                                      "{{ pkg_name }}"    # package_name
++                                      "{{ pkg_var(pkg_name, 'NO_SONAME_MODE', config_suffix) }}")  # soname
++
++        # FIXME: What is the result of this for multi-config? All configs adding themselves to path?
++        set(CMAKE_MODULE_PATH {{ pkg_var(pkg_name, 'BUILD_DIRS', config_suffix) }} {{ '${' }}CMAKE_MODULE_PATH})
++        {% if not components_names %}
++
++        ########## GLOBAL TARGET PROPERTIES {{ configuration }} ########################################
++            set_property(TARGET {{root_target_name}}
++                         APPEND PROPERTY INTERFACE_LINK_LIBRARIES
++                         $<$<CONFIG:{{configuration}}>:{{ pkg_var(pkg_name, 'OBJECTS', config_suffix) }}>
++                         $<$<CONFIG:{{configuration}}>:{{ pkg_var(pkg_name, 'LIBRARIES_TARGETS', '') }}>
++                         )
++
++            if("{{ pkg_var(pkg_name, 'LIBS', config_suffix) }}" STREQUAL "")
++                # If the package is not declaring any "cpp_info.libs" the package deps, system libs,
++                # frameworks etc are not linked to the imported targets and we need to do it to the
++                # global target
++                set_property(TARGET {{root_target_name}}
++                             APPEND PROPERTY INTERFACE_LINK_LIBRARIES
++                             {{pkg_name}}_DEPS_TARGET)
++            endif()
++
++            set_property(TARGET {{root_target_name}}
++                         APPEND PROPERTY INTERFACE_LINK_OPTIONS
++                         $<$<CONFIG:{{configuration}}>:{{ pkg_var(pkg_name, 'LINKER_FLAGS', config_suffix) }}>)
++            set_property(TARGET {{root_target_name}}
++                         APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES
++                         $<$<CONFIG:{{configuration}}>:{{ pkg_var(pkg_name, 'INCLUDE_DIRS', config_suffix) }}>)
++            # Necessary to find LINK shared libraries in Linux
++            set_property(TARGET {{root_target_name}}
++                         APPEND PROPERTY INTERFACE_LINK_DIRECTORIES
++                         $<$<CONFIG:{{configuration}}>:{{ pkg_var(pkg_name, 'LIB_DIRS', config_suffix) }}>)
++            set_property(TARGET {{root_target_name}}
++                         APPEND PROPERTY INTERFACE_COMPILE_DEFINITIONS
++                         $<$<CONFIG:{{configuration}}>:{{ pkg_var(pkg_name, 'COMPILE_DEFINITIONS', config_suffix) }}>)
++            set_property(TARGET {{root_target_name}}
++                         APPEND PROPERTY INTERFACE_COMPILE_OPTIONS
++                         $<$<CONFIG:{{configuration}}>:{{ pkg_var(pkg_name, 'COMPILE_OPTIONS', config_suffix) }}>)
++
++            {%- if set_interface_link_directories %}
++
++            # This is only used for '#pragma comment(lib, "foo")' (automatic link)
++            set_property(TARGET {{root_target_name}}
++                         APPEND PROPERTY INTERFACE_LINK_DIRECTORIES
++                         $<$<CONFIG:{{configuration}}>:{{ pkg_var(pkg_name, 'LIB_DIRS', config_suffix) }}>)
++            {%- endif %}
++
++            # Exe information
++            {% if exe %}
++            message(STATUS "Conan: Target declared imported executable '{{pkg_name}}::{{exe}}'")
++            add_executable({{pkg_name}}::{{exe}} IMPORTED)
++            set_target_properties({{pkg_name}}::{{exe}} PROPERTIES IMPORTED_LOCATION${config_suffix} "{{exe_location}}")
++            {%- endif %}
++
++        {%- else %}
++
++        ########## COMPONENTS TARGET PROPERTIES {{ configuration }} ########################################
++
++            {%- for comp_variable_name, comp_target_name in components_names %}
++
++
++            ########## COMPONENT {{ comp_target_name }} #############
++
++                set({{ pkg_name }}_{{ comp_variable_name }}_FRAMEWORKS_FOUND{{ config_suffix }} "")
++                conan_find_apple_frameworks({{ pkg_name }}_{{ comp_variable_name }}_FRAMEWORKS_FOUND{{ config_suffix }} "{{ comp_var(pkg_name, comp_variable_name, 'FRAMEWORKS', config_suffix) }}" "{{ comp_var(pkg_name, comp_variable_name, 'FRAMEWORK_DIRS', config_suffix) }}")
++
++                set({{ pkg_name }}_{{ comp_variable_name }}_LIBRARIES_TARGETS "")
++
++                ######## Create an interface target to contain all the dependencies (frameworks, system and conan deps)
++                if(NOT TARGET {{ pkg_name + '_' + comp_variable_name + '_DEPS_TARGET'}})
++                    add_library({{ pkg_name + '_' + comp_variable_name + '_DEPS_TARGET'}} INTERFACE IMPORTED)
++                endif()
++
++                set_property(TARGET {{ pkg_name + '_' + comp_variable_name + '_DEPS_TARGET'}}
++                             APPEND PROPERTY INTERFACE_LINK_LIBRARIES
++                             $<$<CONFIG:{{configuration}}>:{{ comp_var(pkg_name, comp_variable_name, 'FRAMEWORKS_FOUND', config_suffix) }}>
++                             $<$<CONFIG:{{configuration}}>:{{ comp_var(pkg_name, comp_variable_name, 'SYSTEM_LIBS', config_suffix) }}>
++                             $<$<CONFIG:{{configuration}}>:{{ comp_var(pkg_name, comp_variable_name, 'DEPENDENCIES', config_suffix) }}>
++                             )
++
++                ####### Find the libraries declared in cpp_info.component["xxx"].libs,
++                ####### create an IMPORTED target for each one and link the '{{pkg_name}}_{{comp_variable_name}}_DEPS_TARGET' to all of them
++                conan_package_library_targets("{{ comp_var(pkg_name, comp_variable_name, 'LIBS', config_suffix) }}"
++                                      "{{ comp_var(pkg_name, comp_variable_name, 'LIB_DIRS', config_suffix) }}"
++                                      "{{ comp_var(pkg_name, comp_variable_name, 'BIN_DIRS', config_suffix) }}" # package_bindir
++                                      "{{ comp_var(pkg_name, comp_variable_name, 'LIBRARY_TYPE', config_suffix) }}"
++                                      "{{ comp_var(pkg_name, comp_variable_name, 'IS_HOST_WINDOWS', config_suffix) }}"
++                                      {{ pkg_name + '_' + comp_variable_name + '_DEPS_TARGET'}}
++                                      {{ pkg_name + '_' + comp_variable_name + '_LIBRARIES_TARGETS'}}
++                                      "{{ config_suffix }}"
++                                      "{{ pkg_name }}_{{ comp_variable_name }}"
++                                      "{{ comp_var(pkg_name, comp_variable_name, 'NO_SONAME_MODE', config_suffix) }}")
++
++
++                ########## TARGET PROPERTIES #####################################
++                set_property(TARGET {{comp_target_name}}
++                             APPEND PROPERTY INTERFACE_LINK_LIBRARIES
++                             $<$<CONFIG:{{configuration}}>:{{ comp_var(pkg_name, comp_variable_name, 'OBJECTS', config_suffix) }}>
++                             $<$<CONFIG:{{configuration}}>:{{ comp_var(pkg_name, comp_variable_name, 'LIBRARIES_TARGETS', '') }}>
++                             )
++
++                if("{{ comp_var(pkg_name, comp_variable_name, 'LIBS', config_suffix) }}" STREQUAL "")
++                    # If the component is not declaring any "cpp_info.components['foo'].libs" the system, frameworks etc are not
++                    # linked to the imported targets and we need to do it to the global target
++                    set_property(TARGET {{comp_target_name}}
++                                 APPEND PROPERTY INTERFACE_LINK_LIBRARIES
++                                 {{pkg_name}}_{{comp_variable_name}}_DEPS_TARGET)
++                endif()
++
++                set_property(TARGET {{ comp_target_name }} APPEND PROPERTY INTERFACE_LINK_OPTIONS
++                             $<$<CONFIG:{{ configuration }}>:{{ comp_var(pkg_name, comp_variable_name, 'LINKER_FLAGS', config_suffix) }}>)
++                set_property(TARGET {{ comp_target_name }} APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES
++                             $<$<CONFIG:{{ configuration }}>:{{ comp_var(pkg_name, comp_variable_name, 'INCLUDE_DIRS', config_suffix) }}>)
++                set_property(TARGET {{comp_target_name }} APPEND PROPERTY INTERFACE_LINK_DIRECTORIES
++                             $<$<CONFIG:{{ configuration }}>:{{ comp_var(pkg_name, comp_variable_name, 'LIB_DIRS', config_suffix) }}>)
++                set_property(TARGET {{ comp_target_name }} APPEND PROPERTY INTERFACE_COMPILE_DEFINITIONS
++                             $<$<CONFIG:{{ configuration }}>:{{ comp_var(pkg_name, comp_variable_name, 'COMPILE_DEFINITIONS', config_suffix) }}>)
++                set_property(TARGET {{ comp_target_name }} APPEND PROPERTY INTERFACE_COMPILE_OPTIONS
++                             $<$<CONFIG:{{ configuration }}>:{{ comp_var(pkg_name, comp_variable_name, 'COMPILE_OPTIONS', config_suffix) }}>)
++
++                {%- if set_interface_link_directories %}
++                # This is only used for '#pragma comment(lib, "foo")' (automatic link)
++                set_property(TARGET {{ comp_target_name }} APPEND PROPERTY INTERFACE_LINK_DIRECTORIES
++                             $<$<CONFIG:{{ configuration }}>:{{ comp_var(pkg_name, comp_variable_name, 'LIB_DIRS', config_suffix) }}>)
++
++                {%- endif %}
++            {%endfor %}
++
++
++            ########## AGGREGATED GLOBAL TARGET WITH THE COMPONENTS #####################
++            {%- for comp_variable_name, comp_target_name in components_names %}
++
++            set_property(TARGET {{root_target_name}} APPEND PROPERTY INTERFACE_LINK_LIBRARIES {{ comp_target_name }})
++
++            {%- endfor %}
++
++
++        {%- endif %}
++
++
++        ########## For the modules (FindXXX)
++        set({{ pkg_name }}_LIBRARIES{{ config_suffix }} {{root_target_name}})
++
++        """)
++
++    def get_declared_components_targets_names(self):
++        """Returns a list of component_name"""
++        ret = []
++        sorted_comps = self.conanfile.cpp_info.get_sorted_components()
++        for comp_name, comp in sorted_comps.items():
++            ret.append(self.get_component_alias(self.conanfile, comp_name))
++        ret.reverse()
++        return ret
++
++    def get_deps_targets_names(self):
++        """
++          - [{foo}::{bar}, ] of the required
++        """
++        ret = []
++
++        # Get a list of dependencies target names
++        # Declared cppinfo.requires or .components[].requires
++        transitive_reqs = self.cmakedeps.get_transitive_requires(self.conanfile)
++        if self.conanfile.cpp_info.required_components:
++            for dep_name, component_name in self.conanfile.cpp_info.required_components:
++                try:
++                    # if not dep_name, it is internal, from current self.conanfile
++                    req = transitive_reqs[dep_name] if dep_name is not None else self.conanfile
++                except KeyError:
++                    # if it raises it means the required component is not in the direct_host
++                    # dependencies, maybe it has been filtered out by traits => Skip
++                    pass
++                else:
++                    component_name = self.get_component_alias(req, component_name)
++                    ret.append(component_name)
++        elif transitive_reqs:
++            # Regular external "conanfile.requires" declared, not cpp_info requires
++            ret = [self.get_root_target_name(r) for r in transitive_reqs.values()]
++        return ret
+diff --git a/conan/tools/cmake/cmakedeps2/targets.py b/conan/tools/cmake/cmakedeps2/targets.py
+new file mode 100644
+index 00000000000..c8d9cff1559
+--- /dev/null
++++ b/conan/tools/cmake/cmakedeps2/targets.py
+@@ -0,0 +1,104 @@
++import textwrap
++
++from conan.tools.cmake.cmakedeps.templates import CMakeDepsFileTemplate
++
++"""
++
++FooTargets.cmake
++
++"""
++
++
++class TargetsTemplate2:
++
++    @property
++    def filename(self):
++        name += self.file_name + "Targets.cmake"
++        return name
++
++    @property
++    def context(self):
++        data_pattern = "${CMAKE_CURRENT_LIST_DIR}/" if not self.generating_module else "${CMAKE_CURRENT_LIST_DIR}/module-"
++        data_pattern += "{}-*-data.cmake".format(self.file_name)
++
++        target_pattern = "" if not self.generating_module else "module-"
++        target_pattern += "{}-Target-*.cmake".format(self.file_name)
++
++        cmake_target_aliases = self.conanfile.cpp_info.\
++            get_property("cmake_target_aliases", check_type=list) or dict()
++
++        target = self.root_target_name
++        cmake_target_aliases = {alias: target for alias in cmake_target_aliases}
++
++        cmake_component_target_aliases = dict()
++        for comp_name in self.conanfile.cpp_info.components:
++            if comp_name is not None:
++                aliases = \
++                    self.conanfile.cpp_info.components[comp_name].\
++                    get_property("cmake_target_aliases", check_type=list) or dict()
++
++                target = self.get_component_alias(self.conanfile, comp_name)
++                cmake_component_target_aliases[comp_name] = {alias: target for alias in aliases}
++
++        ret = {"pkg_name": self.pkg_name,
++               "root_target_name": self.root_target_name,
++               "file_name": self.file_name,
++               "data_pattern": data_pattern,
++               "target_pattern": target_pattern,
++               "cmake_target_aliases": cmake_target_aliases,
++               "cmake_component_target_aliases": cmake_component_target_aliases}
++
++        return ret
++
++    @property
++    def template(self):
++        return textwrap.dedent("""\
++        # Load the debug and release variables
++        file(GLOB DATA_FILES "{{data_pattern}}")
++
++        foreach(f ${DATA_FILES})
++            include(${f})
++        endforeach()
++
++        # Create the targets for all the components
++        foreach(_COMPONENT {{ '${' + pkg_name + '_COMPONENT_NAMES' + '}' }} )
++            if(NOT TARGET ${_COMPONENT})
++                add_library(${_COMPONENT} INTERFACE IMPORTED)
++                message({% raw %}${{% endraw %}{{ file_name }}_MESSAGE_MODE} "Conan: Component target declared '${_COMPONENT}'")
++            endif()
++        endforeach()
++
++        if(NOT TARGET {{ root_target_name }})
++            add_library({{ root_target_name }} INTERFACE IMPORTED)
++            message({% raw %}${{% endraw %}{{ file_name }}_MESSAGE_MODE} "Conan: Target declared '{{ root_target_name }}'")
++        endif()
++
++        {%- for alias, target in cmake_target_aliases.items() %}
++
++        if(NOT TARGET {{alias}})
++            add_library({{alias}} INTERFACE IMPORTED)
++            set_property(TARGET {{ alias }} PROPERTY INTERFACE_LINK_LIBRARIES {{target}})
++        endif()
++
++        {%- endfor %}
++
++        {%- for comp_name, component_aliases in cmake_component_target_aliases.items() %}
++
++            {%- for alias, target in component_aliases.items() %}
++
++        if(NOT TARGET {{alias}})
++            add_library({{alias}} INTERFACE IMPORTED)
++            set_property(TARGET {{ alias }} PROPERTY INTERFACE_LINK_LIBRARIES {{target}})
++        endif()
++
++            {%- endfor %}
++
++        {%- endfor %}
++
++        # Load the debug and release library finders
++        file(GLOB CONFIG_FILES "${CMAKE_CURRENT_LIST_DIR}/{{ target_pattern }}")
++
++        foreach(f ${CONFIG_FILES})
++            include(${f})
++        endforeach()
++        """)
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py
+index 56e12957bc0..daa9628efea 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py
+@@ -146,14 +146,13 @@ def package_info(self):
+ 
+     consumer = textwrap.dedent("""
+         from conan import ConanFile
+-        from conan.tools.cmake import CMakeDeps, CMakeToolchain, CMake, cmake_layout
++        from conan.tools.cmake import CMakeDeps2, CMakeToolchain, CMake, cmake_layout
+         class Consumer(ConanFile):
+             settings = "os", "compiler", "arch", "build_type"
+             tool_requires = "mytool/0.1"
+ 
+             def generate(self):
+-                deps = CMakeDeps(self)
+-                deps.build_context_activated = ["mytool"]
++                deps = CMakeDeps2(self)
+                 deps.generate()
+                 tc = CMakeToolchain(self)
+                 tc.generate()

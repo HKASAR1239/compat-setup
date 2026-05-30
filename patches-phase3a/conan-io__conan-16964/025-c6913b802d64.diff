@@ -1,0 +1,218 @@
+diff --git a/conan/tools/cmake/cmakedeps2/config.py b/conan/tools/cmake/cmakedeps2/config.py
+index f330e28b11f..3249bcb692c 100644
+--- a/conan/tools/cmake/cmakedeps2/config.py
++++ b/conan/tools/cmake/cmakedeps2/config.py
+@@ -28,9 +28,15 @@ def _context(self):
+         f = self._cmakedeps.get_cmake_filename(self._conanfile)
+         targets_include = f"{f}Targets.cmake"
+         pkg_name = self._conanfile.ref.name
++        build_modules_paths = self._cmakedeps.get_property("cmake_build_modules", self._conanfile,
++                                                           check_type=list) or []
++        # FIXME: Proper escaping of paths for CMake
++        # FIXME: build_module_paths coming from last config only
++        build_modules_paths = [f.replace("\\", "/") for f in build_modules_paths]
+         return {"pkg_name": pkg_name,
+                 "config_suffix": self._cmakedeps.config_suffix,
+-                "targets_include_file": targets_include}
++                "targets_include_file": targets_include,
++                "build_modules_paths": build_modules_paths}
+ 
+     @property
+     def _template(self):
+@@ -50,4 +56,10 @@ def _template(self):
+            message(FATAL_ERROR "Please, set the CMAKE_BUILD_TYPE variable when calling to CMake "
+                                "adding the '-DCMAKE_BUILD_TYPE=<build_type>' argument.")
+         endif()
++
++        # build_modules_paths comes from last configuration only
++        {% for build_module in build_modules_paths %}
++        message(STATUS "Conan: Including build module from '{{build_module}}'")
++        include("{{ build_module }}")
++        {% endfor %}
+         """)
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+index 88d93da47ae..9d7cfc2db52 100644
+--- a/conan/tools/cmake/cmakedeps2/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -4,6 +4,7 @@
+ import jinja2
+ from jinja2 import Template
+ 
++from conan.api.output import ConanOutput
+ from conan.errors import ConanException
+ from conans.model.pkg_type import PackageType
+ 
+@@ -39,7 +40,8 @@ def _requires(self, info, components):
+ 
+         for required_pkg, required_comp in requires:
+             if required_pkg is None:  # Points to a component of same package
+-                dep_component = components[required_comp]
++                # TODO: Using `.get()` to avoid components creating a comp because defaultdict
++                dep_component = components.get(required_comp)
+                 dep_target = dep_component.get_property("cmake_target_name") or f"{pkg_name}::{required_comp}"
+                 result.append(dep_target)
+             else:  # Different package
+@@ -50,13 +52,22 @@ def _requires(self, info, components):
+                                          f"'{required_pkg}::{required_comp}', "
+                                          f"but '{required_pkg}' is not a direct dependency")
+                 try:
+-                    req = transitive_reqs[required_pkg]
++                    dep = transitive_reqs[required_pkg]
+                 except KeyError:  # The transitive dep might have been skipped
+                     pass
+                 else:
+                     # TODO: Missing cmake_target_name for req
+-                    dep_target = f"{required_pkg}::{required_comp}"
+-                    result.append(dep_target)
++                    dep_comp = dep.cpp_info.components.get(required_comp)
++                    if dep_comp is None:
++                        # TODO: Check this
++                        ConanOutput().warning(f"{self._conanfile}: component '{required_comp}' "
++                                              f"required but not existing in {dep}")
++                        dep_target = f"{required_pkg}::{required_comp}"
++                        result.append(dep_target)
++                    else:
++                        dep_cmake = dep_comp.get_property("cmake_target_name")
++                        dep_target = dep_cmake or f"{required_pkg}::{required_comp}"
++                        result.append(dep_target)
+         return result
+ 
+     @property
+@@ -75,6 +86,7 @@ def _add_libs(info, component_name=None):
+                                    for i in info.includedirs) if info.includedirs else ""
+             requires = " ".join(self._requires(info, self._conanfile.cpp_info.components))
+             cxxflags = " ".join(info.cxxflags)
++            system_libs = " ".join(info.system_libs)
+             # TODO: Other cflags, linkflags
+             if info.libs:  # TODO: Handle component_name for libs
+                 if len(info.libs) != 1:
+@@ -94,7 +106,8 @@ def _add_libs(info, component_name=None):
+                                          "link_location": "",
+                                          "requires": requires,
+                                          "defines": defines,
+-                                         "cxxflags": cxxflags}
++                                         "cxxflags": cxxflags,
++                                         "system_libs": system_libs}
+             elif info.includedirs and not info.exe:  # Pure header only
+                 cmp_name = component_name or pkg_name
+                 target_name = info.get_property("cmake_target_name") or f"{pkg_name}::{cmp_name}"
+@@ -102,7 +115,8 @@ def _add_libs(info, component_name=None):
+                                      "includedirs": includedirs,
+                                      "defines": defines,
+                                      "requires": requires,
+-                                     "cxxflags": cxxflags}
++                                     "cxxflags": cxxflags,
++                                     "system_libs": system_libs}
+ 
+         if cpp_info.has_components:
+             for name, component in cpp_info.components.items():
+@@ -115,7 +129,7 @@ def _add_libs(info, component_name=None):
+             if cpp_info.default_components is not None:
+                 all_requires = []
+                 for default_comp in cpp_info.default_components:
+-                    comp = cpp_info.components[default_comp]
++                    comp = cpp_info.components.get(default_comp)
+                     comp_name = comp.get_property("cmake_target_name") or f"{pkg_name}::{default_comp}"
+                     all_requires.append(comp_name)
+                 all_requires = " ".join(all_requires)
+@@ -156,7 +170,8 @@ def _get_dependencies(self):
+         #    return []
+ 
+         transitive_reqs = self._cmakedeps.get_transitive_requires(self._conanfile)
+-        ret = {self._cmakedeps.get_cmake_filename(r): None for r in transitive_reqs.values()}
++        # FIXME: Hardcoded CONFIG
++        ret = {self._cmakedeps.get_cmake_filename(r): "CONFIG" for r in transitive_reqs.values()}
+         return ret
+ 
+     @staticmethod
+@@ -224,6 +239,9 @@ def _template(self):
+         {% if lib_info.get("requires") %}
+         target_link_libraries({{lib}} INTERFACE {{lib_info["requires"]}})
+         {% endif %}
++        {% if lib_info.get("system_libs") %}
++        target_link_libraries({{lib}} INTERFACE {{lib_info["system_libs"]}})
++        {% endif %}
+ 
+         {% endfor %}
+ 
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+index 9931e559e68..844392606c6 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+@@ -506,3 +506,62 @@ def package_info(self):
+         assert "vector: Release!" in c.out
+         assert "module: Release!" in c.out
+         assert "vector: Release!" in c.out
++
++
++@pytest.mark.tool("cmake")
++@pytest.mark.parametrize("tool_requires", [True, False])
++def test_build_modules_custom_script(tool_requires):
++    """
++    it works both as a tool_requires and as a regular requirement
++    """
++    client = TestClient()
++    conanfile = textwrap.dedent("""
++        import os
++        from conan import ConanFile
++        from conan.tools.files import copy
++
++        class Conan(ConanFile):
++            name = "myfunctions"
++            version = "1.0"
++            exports_sources = ["*.cmake"]
++
++            def package(self):
++                copy(self, "*.cmake", self.source_folder, self.package_folder)
++
++            def package_info(self):
++                self.cpp_info.set_property("cmake_build_modules", ["myfunction.cmake"])
++        """)
++
++    myfunction = textwrap.dedent("""
++        function(myfunction)
++            message("Hello myfunction!!!!")
++        endfunction()
++        """)
++    client.save({"conanfile.py": conanfile, "myfunction.cmake": myfunction})
++    client.run("create .")
++
++    requires = "tool_requires" if tool_requires else "requires"
++    consumer = textwrap.dedent(f"""
++        from conan import ConanFile
++        from conan.tools.cmake import CMake
++
++        class Conan(ConanFile):
++            settings = "os", "compiler", "build_type", "arch"
++            generators = "CMakeToolchain", "CMakeDeps"
++            {requires} = "myfunctions/1.0"
++
++            def build(self):
++                cmake = CMake(self)
++                cmake.configure()
++        """)
++    cmakelists = textwrap.dedent("""
++        cmake_minimum_required(VERSION 3.15)
++        project(test)
++        find_package(myfunctions CONFIG REQUIRED)
++        myfunction()
++        """)
++    client.save({"conanfile.py": consumer,
++                 "CMakeLists.txt": cmakelists},
++                clean_first=True)
++    client.run("build . -c tools.cmake.cmakedeps:new=will_break_next")
++    assert "Hello myfunction!!!!" in client.out
+diff --git a/test/functional/toolchains/conftest.py b/test/functional/toolchains/conftest.py
+index cd66df7c874..333551d1165 100644
+--- a/test/functional/toolchains/conftest.py
++++ b/test/functional/toolchains/conftest.py
+@@ -102,6 +102,9 @@ def package_info(self):
+                 self.cpp_info.components["headers"].defines = ["MY_MATRIX_HEADERS_DEFINE=1"]
+                 if self.settings.compiler == "msvc":
+                     self.cpp_info.components["headers"].cxxflags = ["/Zc:__cplusplus"]
++                    self.cpp_info.components["headers"].system_libs = ["ws2_32"]
++                else:
++                    self.cpp_info.components["headers"].system_libs = ["m"]
+ 
+                 self.cpp_info.components["vector"].libs = ["vector"]
+                 self.cpp_info.components["vector"].includedirs = ["include"]

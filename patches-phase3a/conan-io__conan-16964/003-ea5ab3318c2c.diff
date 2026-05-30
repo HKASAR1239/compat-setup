@@ -1,0 +1,75 @@
+diff --git a/conan/tools/cmake/cmakedeps/templates/target_configuration.py b/conan/tools/cmake/cmakedeps/templates/target_configuration.py
+index 747b2bf011f..cf088e0adbe 100644
+--- a/conan/tools/cmake/cmakedeps/templates/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps/templates/target_configuration.py
+@@ -36,7 +36,8 @@ def context(self):
+                 "deps_targets_names": ";".join(deps_targets_names),
+                 "components_names": components_names,
+                 "configuration": self.cmakedeps.configuration,
+-                "set_interface_link_directories": auto_link and is_win}
++                "set_interface_link_directories": auto_link and is_win,
++                "cpp_info": self.conanfile.cpp_info}
+ 
+     @property
+     def template(self):
+@@ -128,6 +129,11 @@ def template(self):
+                          $<$<CONFIG:{{configuration}}>:{{ pkg_var(pkg_name, 'LIB_DIRS', config_suffix) }}>)
+             {%- endif %}
+ 
++            # Exe information
++            {% for exe_name, exe_info in cpp_info.exes.items() %}
++            add_executable({{pkg_name}}::{{exe_name}} IMPORTED)
++            set_target_properties({{pkg_name}}::{{exe_name}} PROPERTIES IMPORTED_LOCATION${config_suffix} "{{exe_info["location"]}}")
++            {%- endfor %}
+ 
+         {%- else %}
+ 
+diff --git a/conan/tools/cmake/cmakedeps/templates/target_data.py b/conan/tools/cmake/cmakedeps/templates/target_data.py
+index 35330ee091d..f4efcd61698 100644
+--- a/conan/tools/cmake/cmakedeps/templates/target_data.py
++++ b/conan/tools/cmake/cmakedeps/templates/target_data.py
+@@ -318,6 +318,7 @@ def join_defines(values, prefix=""):
+         self.compile_definitions = join_defines(cpp_info.defines)
+         self.library_type = library_type
+         self.is_host_windows = "1" if is_host_windows else "0"
++        self.exes = cpp_info.exes
+ 
+         # For modern CMake targets we need to prepare a list to not
+         # loose the elements in the list by replacing " " with ";". Example "-framework Foundation"
+diff --git a/conans/model/build_info.py b/conans/model/build_info.py
+index f02e024d25a..ff6a18c9244 100644
+--- a/conans/model/build_info.py
++++ b/conans/model/build_info.py
+@@ -263,7 +263,7 @@ def libs(self, value):
+     @property
+     def exes(self):
+         if self._exes is None:
+-            self._exes = []
++            self._exes = {}
+         return self._exes
+ 
+     @exes.setter
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py
+index 101ca3ee9c1..5b19a9fc8f4 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py
+@@ -7,7 +7,8 @@
+ 
+ @pytest.mark.tool("cmake")
+ def test_exes():
+-    conanfile = textwrap.dedent("""
++    conanfile = textwrap.dedent(r"""
++        import os
+         from conan import ConanFile
+         from conan.tools.cmake import CMake, cmake_layout
+ 
+@@ -32,7 +33,8 @@ def package(self):
+                 cmake.install()
+ 
+             def package_info(self):
+-                self.cpp_info.exes = {"mytool": {"location": "bin/mytool"}}
++                location =  os.path.join(self.package_folder, "bin/mytool.exe").replace("\\", "/")
++                self.cpp_info.exes = {"myexe": {"location": location}}
+         """)
+     main = textwrap.dedent("""
+         #include <fstream>

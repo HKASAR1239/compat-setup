@@ -1,0 +1,129 @@
+diff --git a/conans/model/build_info.py b/conans/model/build_info.py
+index 4aa0aee2d0f..f02e024d25a 100644
+--- a/conans/model/build_info.py
++++ b/conans/model/build_info.py
+@@ -77,6 +77,7 @@ def __init__(self, set_defaults=False):
+         self._sharedlinkflags = None  # linker flags
+         self._exelinkflags = None  # linker flags
+         self._objects = None  # linker flags
++        self._exes = None  # application executables
+ 
+         self._sysroot = None
+         self._requires = None
+@@ -111,7 +112,8 @@ def serialize(self):
+             "objects": self._objects,
+             "sysroot": self._sysroot,
+             "requires": self._requires,
+-            "properties": self._properties
++            "properties": self._properties,
++            "exes": self._exes,
+         }
+ 
+     @staticmethod
+@@ -258,6 +260,16 @@ def full_libs(self):
+     def libs(self, value):
+         self._libs = value
+ 
++    @property
++    def exes(self):
++        if self._exes is None:
++            self._exes = []
++        return self._exes
++
++    @exes.setter
++    def exes(self, value):
++        self._exes = value
++
+     @property
+     def defines(self):
+         if self._defines is None:
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py
+new file mode 100644
+index 00000000000..101ca3ee9c1
+--- /dev/null
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_exes.py
+@@ -0,0 +1,84 @@
++import textwrap
++
++import pytest
++
++from conan.test.utils.tools import TestClient
++
++
++@pytest.mark.tool("cmake")
++def test_exes():
++    conanfile = textwrap.dedent("""
++        from conan import ConanFile
++        from conan.tools.cmake import CMake, cmake_layout
++
++        class Test(ConanFile):
++            name = "mytool"
++            version = "0.1"
++            package_type = "application"
++            settings = "os", "arch", "compiler", "build_type"
++            generators = "CMakeToolchain"
++            exports_sources = "*"
++
++            def build(self):
++                cmake = CMake(self)
++                cmake.configure()
++                cmake.build()
++
++            def layout(self):
++                cmake_layout(self)
++
++            def package(self):
++                cmake = CMake(self)
++                cmake.install()
++
++            def package_info(self):
++                self.cpp_info.exes = {"mytool": {"location": "bin/mytool"}}
++        """)
++    main = textwrap.dedent("""
++        #include <fstream>
++
++        int main() {
++            std::ofstream f("out.c");
++        }
++        """)
++    c = TestClient()
++    c.run("new cmake_exe -d name=mytool -d version=0.1")
++    c.save({"conanfile.py": conanfile,
++            "src/main.cpp": main})
++    c.run("create .")
++
++    consumer = textwrap.dedent("""
++        from conan import ConanFile
++        from conan.tools.cmake import CMakeDeps, CMakeToolchain, CMake, cmake_layout
++        class Consumer(ConanFile):
++            settings = "os", "compiler", "arch", "build_type"
++            tool_requires = "mytool/0.1"
++
++            def generate(self):
++                deps = CMakeDeps(self)
++                deps.build_context_activated = ["mytool"]
++                deps.generate()
++                tc = CMakeToolchain(self)
++                tc.generate()
++
++            def layout(self):
++                cmake_layout(self)
++            def build(self):
++                cmake = CMake(self)
++                cmake.configure()
++                cmake.build()
++        """)
++    cmake = textwrap.dedent("""
++        cmake_minimum_required(VERSION 3.15)
++        project(consumer C)
++
++        find_package(mytool)
++        add_custom_command(OUTPUT out.c
++                           COMMAND mytool::myexe)
++        add_library(myLib out.c)
++        """)
++    c.save({"conanfile.py": consumer,
++            "CMakeLists.txt": cmake}, clean_first=True)
++    c.run("build .")
++    print(c.out)
++

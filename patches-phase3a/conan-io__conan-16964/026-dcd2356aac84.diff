@@ -1,0 +1,232 @@
+diff --git a/conan/cps/cps.py b/conan/cps/cps.py
+index 67007d8570a..621a387ce27 100644
+--- a/conan/cps/cps.py
++++ b/conan/cps/cps.py
+@@ -85,7 +85,7 @@ def from_cpp_info(cpp_info, pkg_type, libname=None):
+             cps_comp.type = CPSComponentType.INTERFACE
+             return cps_comp
+ 
+-        cpp_info.deduce_cps(pkg_type)
++        cpp_info.deduce_locations(pkg_type)
+         cps_comp.type = CPSComponentType.from_conan(cpp_info.type)
+         cps_comp.location = cpp_info.location
+         cps_comp.link_location = cpp_info.link_location
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+index 9d7cfc2db52..e22077d1028 100644
+--- a/conan/tools/cmake/cmakedeps2/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -80,20 +80,29 @@ def _context(self):
+ 
+         libs = {}
+ 
+-        def _add_libs(info, component_name=None):
++        def _add_libs(info, component_name):
+             defines = " ".join(info.defines)
+             includedirs = ";".join(self._path(i, package_folder, package_folder_var)
+                                    for i in info.includedirs) if info.includedirs else ""
+-            requires = " ".join(self._requires(info, self._conanfile.cpp_info.components))
++            requires = " ".join(self._requires(info, cpp_info.components))
+             cxxflags = " ".join(info.cxxflags)
+             system_libs = " ".join(info.system_libs)
++            target_name = info.get_property("cmake_target_name") or f"{pkg_name}::{component_name}"
++            if not info.includedirs and not info.libs:
++                return
++            assert not info.exe, "Do not define .exe and .includedirs or .libs simultaneously"
++            target = {"type": "INTERFACE",
++                      "includedirs": includedirs,
++                      "defines": defines,
++                      "requires": requires,
++                      "cxxflags": cxxflags,
++                      "system_libs": system_libs}
++            libs[target_name] = target
+             # TODO: Other cflags, linkflags
+-            if info.libs:  # TODO: Handle component_name for libs
++            if info.libs:
+                 if len(info.libs) != 1:
+                     raise ConanException(f"New CMakeDeps only allows 1 lib per component:\n"
+                                          f"{self._conanfile}: {info.libs}")
+-                lib_name = info.libs[0]
+-                target_name = info.get_property("cmake_target_name") or f"{pkg_name}::{lib_name}"
+                 location = self._path(info.location, package_folder, package_folder_var)
+                 lib_type = "SHARED" if info.type is PackageType.SHARED else \
+                     "STATIC" if info.type is PackageType.STATIC else \
+@@ -101,36 +110,22 @@ def _add_libs(info, component_name=None):
+ 
+                 if lib_type:
+                     libs[target_name] = {"type": lib_type,
+-                                         "includedirs": includedirs,
+                                          "location": location,
+-                                         "link_location": "",
+-                                         "requires": requires,
+-                                         "defines": defines,
+-                                         "cxxflags": cxxflags,
+-                                         "system_libs": system_libs}
+-            elif info.includedirs and not info.exe:  # Pure header only
+-                cmp_name = component_name or pkg_name
+-                target_name = info.get_property("cmake_target_name") or f"{pkg_name}::{cmp_name}"
+-                libs[target_name] = {"type": "INTERFACE",
+-                                     "includedirs": includedirs,
+-                                     "defines": defines,
+-                                     "requires": requires,
+-                                     "cxxflags": cxxflags,
+-                                     "system_libs": system_libs}
++                                         "link_location": ""}
+ 
+         if cpp_info.has_components:
+             for name, component in cpp_info.components.items():
+-                _add_libs(component, name)
++                _add_libs(component, component_name=name)
+         else:
+-            _add_libs(cpp_info)
++            _add_libs(cpp_info, component_name=pkg_name)
+ 
+         if libs and f"{pkg_name}::{pkg_name}" not in libs:
+             # Add a generic interface target for the package depending on the others
+             if cpp_info.default_components is not None:
+                 all_requires = []
+-                for default_comp in cpp_info.default_components:
+-                    comp = cpp_info.components.get(default_comp)
+-                    comp_name = comp.get_property("cmake_target_name") or f"{pkg_name}::{default_comp}"
++                for defaultc in cpp_info.default_components:
++                    comp = cpp_info.components.get(defaultc)
++                    comp_name = comp.get_property("cmake_target_name") or f"{pkg_name}::{defaultc}"
+                     all_requires.append(comp_name)
+                 all_requires = " ".join(all_requires)
+             else:
+@@ -138,20 +133,7 @@ def _add_libs(info, component_name=None):
+             libs[f"{pkg_name}::{pkg_name}"] = {"type": "INTERFACE",
+                                                "requires": all_requires}
+ 
+-        exes = {}
+-
+-        def _add_exe(info):
+-            if info.exe:
+-                target = info.get_property("cmake_target_name") or f"{pkg_name}::{info.exe}"
+-                exe_location = self._path(info.location, package_folder, package_folder_var)
+-                exes[target] = exe_location
+-
+-        if cpp_info.has_components:
+-            for name, component in cpp_info.components.items():
+-                _add_exe(component)
+-        else:
+-            if cpp_info.exe:
+-                _add_exe(cpp_info)
++        exes = self._get_exes(cpp_info, pkg_name, package_folder, package_folder_var)
+ 
+         # TODO: Missing find_modes
+         dependencies = self._get_dependencies()
+@@ -162,6 +144,27 @@ def _add_exe(info):
+                 "exes": exes,
+                 "libs": libs}
+ 
++    def _get_exes(self, cpp_info, pkg_name, package_folder, package_folder_var):
++        exes = {}
++
++        if cpp_info.has_components:
++            assert not cpp_info.exe, "Package has components and exe"
++            assert not cpp_info.libs, "Package has components and libs"
++            for name, comp in cpp_info.components.items():
++                if comp.exe or comp.type is PackageType.APP:
++                    target = comp.get_property("cmake_target_name") or f"{pkg_name}::{name}"
++                    exe_location = self._path(comp.location, package_folder, package_folder_var)
++                    exes[target] = exe_location
++        else:
++            if cpp_info.exe:
++                assert not cpp_info.libs, "Package has exe and libs"
++                assert cpp_info.location, "Package has exe and no location"
++                target = cpp_info.get_property("cmake_target_name") or f"{pkg_name}::{pkg_name}"
++                exe_location = self._path(cpp_info.location, package_folder, package_folder_var)
++                exes[target] = exe_location
++
++        return exes
++
+     def _get_dependencies(self):
+         """ transitive dependencies Filenames for find_dependency()
+         """
+diff --git a/conans/model/build_info.py b/conans/model/build_info.py
+index b31410a4d54..6269d1cb58a 100644
+--- a/conans/model/build_info.py
++++ b/conans/model/build_info.py
+@@ -470,7 +470,7 @@ def relocate(el):
+     def parsed_requires(self):
+         return [r.split("::", 1) if "::" in r else (None, r) for r in self.requires]
+ 
+-    def deduce_cps(self, pkg_type):
++    def deduce_locations(self, pkg_type):
+         if self._exe:   # exe is a new field, it should have the correct location
+             return
+         if self._location or self._link_location:
+@@ -709,21 +709,32 @@ def deduce_full_cpp_info(self, conanfile):
+         pkg_type = conanfile.package_type
+ 
+         result = CppInfo()  # clone it
+-        result._package = self._package.clone()
+-        result.default_components = self.default_components
+-        result.components = {k: v.clone() for k, v in self.components.items()}
++
+         if self.libs and len(self.libs) > 1:  # expand in multiple components
+             ConanOutput().warning(f"{conanfile}: The 'cpp_info.libs' contain more than 1 library. "
+                                   "Define 'cpp_info.components' instead.")
+             assert not self.components, f"{conanfile} cpp_info shouldn't have .libs and .components"
+             for lib in self.libs:
+-                c = self._package.clone()
++                c = _Component()  # Do not do a full clone, we don't need the properties
++                c.type = self.type  # This should be a string
++                c.includedirs = self.includedirs
++                c.libdirs = self.libdirs
+                 c.libs = [lib]
+-                result.components[lib] = c
+-            result.libs = []
++                result.components[f"_{lib}"] = c
++
++            common = self._package.clone()
++            common.libs = []
++            common.type = str(PackageType.HEADER)  # the type of components is a string!
++            common.requires = list(result.components.keys()) + (self.requires or [])
++
++            result.components["_common"] = common
++        else:
++            result._package = self._package.clone()
++            result.default_components = self.default_components
++            result.components = {k: v.clone() for k, v in self.components.items()}
+ 
+-        result._package.deduce_cps(pkg_type)
++        result._package.deduce_locations(pkg_type)
+         for comp in result.components.values():
+-            comp.deduce_cps(pkg_type)
++            comp.deduce_locations(pkg_type)
+ 
+         return result
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+index 844392606c6..2a4af43b28e 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+@@ -454,6 +454,7 @@ def package(self):
+                     cmake.install()
+ 
+                 def package_info(self):
++                    self.cpp_info.set_property("cmake_target_name", "MyMatrix::MyMatrix")
+                     self.cpp_info.libs = ["module", "vector"]
+                   """)
+ 
+@@ -487,7 +488,7 @@ def package_info(self):
+             find_package(matrix CONFIG REQUIRED)
+ 
+             add_executable(app src/app.cpp)
+-            target_link_libraries(app PRIVATE matrix::matrix)
++            target_link_libraries(app PRIVATE MyMatrix::MyMatrix)
+ 
+             install(TARGETS app)
+             """)
+@@ -499,8 +500,9 @@ def package_info(self):
+         c.save({"CMakeLists.txt": cmake,
+                 "src/app.cpp": app_cpp})
+         c.run("create . -c tools.cmake.cmakedeps:new=will_break_next")
+-        assert "Conan: Target declared imported STATIC library 'matrix::vector'" in c.out
+-        assert "Conan: Target declared imported STATIC library 'matrix::module'" in c.out
++        assert "Conan: Target declared imported STATIC library 'matrix::_vector'" in c.out
++        assert "Conan: Target declared imported STATIC library 'matrix::_module'" in c.out
++        assert "Conan: Target declared imported INTERFACE library 'MyMatrix::MyMatrix'" in c.out
+         assert "Conan: Target declared imported INTERFACE library 'matrix::matrix'" in c.out
+ 
+         assert "vector: Release!" in c.out

@@ -1,0 +1,344 @@
+diff --git a/conan/internal/api/profile/profile_loader.py b/conan/internal/api/profile/profile_loader.py
+index 3ea76a37946..0ab7b0d822b 100644
+--- a/conan/internal/api/profile/profile_loader.py
++++ b/conan/internal/api/profile/profile_loader.py
+@@ -107,7 +107,7 @@ def _error(compiler, cstd, min_version, version):
+             mver = {"17": "192",
+                     "11": "192"}.get(cstd)
+         if mver and version < mver:
+-            _error(compiler, cppstd, mver, version)
++            _error(compiler, cstd, mver, version)
+ """
+ 
+ 
+diff --git a/conan/tools/cmake/toolchain/blocks.py b/conan/tools/cmake/toolchain/blocks.py
+index 74aa1c2f0c0..8f9a2c85236 100644
+--- a/conan/tools/cmake/toolchain/blocks.py
++++ b/conan/tools/cmake/toolchain/blocks.py
+@@ -274,11 +274,11 @@ class CppStdBlock(Block):
+         # Define the C++ and C standards from 'compiler.cppstd' and 'compiler.cstd'
+ 
+         function(conan_modify_std_watch variable access value current_list_file stack)
+-            set(conan_watched_std_variable {{ cppstd }})
++            set(conan_watched_std_variable "{{ cppstd }}")
+             if (${variable} STREQUAL "CMAKE_C_STANDARD")
+-                set(conan_watched_std_variable {{ cstd }})
++                set(conan_watched_std_variable "{{ cstd }}")
+             endif()
+-            if (${access} STREQUAL "MODIFIED_ACCESS" AND NOT ${value} STREQUAL ${conan_watched_std_variable})
++            if ("${access}" STREQUAL "MODIFIED_ACCESS" AND NOT "${value}" STREQUAL "${conan_watched_std_variable}")
+                 message(STATUS "Warning: Standard ${variable} value defined in conan_toolchain.cmake to ${conan_watched_std_variable} has been modified to ${value} by ${current_list_file}")
+             endif()
+             unset(conan_watched_std_variable)
+diff --git a/conan/tools/microsoft/msbuilddeps.py b/conan/tools/microsoft/msbuilddeps.py
+index a747c1c1c58..01bf9f09ec7 100644
+--- a/conan/tools/microsoft/msbuilddeps.py
++++ b/conan/tools/microsoft/msbuilddeps.py
+@@ -96,6 +96,8 @@ def __init__(self, conanfile):
+         self._conanfile = conanfile
+         #: Defines the build type. By default, ``settings.build_type``.
+         self.configuration = conanfile.settings.build_type
++        #: Defines the configuration key used to conditionate on which property sheet to import.
++        self.configuration_key = "Configuration"
+         # TODO: This platform is not exactly the same as ``msbuild_arch``, because it differs
+         # in x86=>Win32
+         #: Platform name, e.g., ``Win32`` if ``settings.arch == "x86"``.
+@@ -103,6 +105,8 @@ def __init__(self, conanfile):
+                          'x86_64': 'x64',
+                          'armv7': 'ARM',
+                          'armv8': 'ARM64'}.get(str(conanfile.settings.arch))
++        #: Defines the platform key used to conditionate on which property sheet to import.
++        self.platform_key = "Platform"
+         ca_exclude = "tools.microsoft.msbuilddeps:exclude_code_analysis"
+         #: List of packages names patterns to add Visual Studio ``CAExcludePath`` property
+         #: to each match as part of its ``conan_[DEP]_[CONFIG].props``. By default, value given by
+@@ -124,14 +128,14 @@ def generate(self):
+             save(generator_file, content)
+ 
+     def _config_filename(self):
+-        props = [("Configuration", self.configuration),
+-                 ("Platform", self.platform)]
+-        name = "".join("_%s" % v for _, v in props)
++        props = [self.configuration,
++                 self.platform]
++        name = "".join("_%s" % v for v in props)
+         return name.lower()
+ 
+     def _condition(self):
+-        props = [("Configuration", self.configuration),
+-                 ("Platform", self.platform)]
++        props = [(self.configuration_key, self.configuration),
++                 (self.platform_key, self.platform)]
+         condition = " And ".join("'$(%s)' == '%s'" % (k, v) for k, v in props)
+         return condition
+ 
+diff --git a/conan/tools/microsoft/toolchain.py b/conan/tools/microsoft/toolchain.py
+index 5e33d51030c..f7fb6214ca1 100644
+--- a/conan/tools/microsoft/toolchain.py
++++ b/conan/tools/microsoft/toolchain.py
+@@ -7,7 +7,7 @@
+ from conan.internal import check_duplicated_generator
+ from conan.tools.build import build_jobs
+ from conan.tools.intel.intel_cc import IntelCC
+-from conan.tools.microsoft.visual import VCVars, msvs_toolset
++from conan.tools.microsoft.visual import VCVars, msvs_toolset, msvc_runtime_flag
+ from conan.errors import ConanException
+ from conans.util.files import save, load
+ 
+@@ -67,7 +67,7 @@ def __init__(self, conanfile):
+         #: The build type. By default, the ``conanfile.settings.build_type`` value
+         self.configuration = conanfile.settings.build_type
+         #: The runtime flag. By default, it'll be based on the `compiler.runtime` setting.
+-        self.runtime_library = self._runtime_library(conanfile.settings)
++        self.runtime_library = self._runtime_library()
+         #: cppstd value. By default, ``compiler.cppstd`` one.
+         self.cppstd = conanfile.settings.get_safe("compiler.cppstd")
+         self.cstd = conanfile.settings.get_safe("compiler.cstd")
+@@ -107,24 +107,13 @@ def generate(self):
+         else:
+             VCVars(self._conanfile).generate()
+ 
+-    @staticmethod
+-    def _runtime_library(settings):
+-        compiler = settings.compiler
+-        runtime = settings.get_safe("compiler.runtime")
+-        if compiler == "msvc" or compiler == "intel-cc":
+-            build_type = settings.get_safe("build_type")
+-            if build_type != "Debug":
+-                runtime_library = {"static": "MultiThreaded",
+-                                   "dynamic": "MultiThreadedDLL"}.get(runtime, "")
+-            else:
+-                runtime_library = {"static": "MultiThreadedDebug",
+-                                   "dynamic": "MultiThreadedDebugDLL"}.get(runtime, "")
+-        else:
+-            runtime_library = {"MT": "MultiThreaded",
+-                               "MTd": "MultiThreadedDebug",
+-                               "MD": "MultiThreadedDLL",
+-                               "MDd": "MultiThreadedDebugDLL"}.get(runtime, "")
+-        return runtime_library
++    def _runtime_library(self):
++        return {
++            "MT": "MultiThreaded",
++            "MTd": "MultiThreadedDebug",
++            "MD": "MultiThreadedDLL",
++            "MDd": "MultiThreadedDebugDLL",
++        }.get(msvc_runtime_flag(self._conanfile), "")
+ 
+     @property
+     def context_config_toolchain(self):
+diff --git a/test/functional/toolchains/cmake/test_cmake_toolchain.py b/test/functional/toolchains/cmake/test_cmake_toolchain.py
+index b3173091bb9..5be9ffa6fcf 100644
+--- a/test/functional/toolchains/cmake/test_cmake_toolchain.py
++++ b/test/functional/toolchains/cmake/test_cmake_toolchain.py
+@@ -2112,3 +2112,48 @@ def build(self):
+     c.run('build . --profile:host=android')
+     assert 'VERSION ".0" format invalid.' not in c.out
+     assert 'sdk: 1.0.0' in c.out
++
++
++@pytest.mark.tool("cmake")
++def test_cmake_toolchain_language_c():
++    client = TestClient()
++
++    conanfile = textwrap.dedent(r"""
++        from conan import ConanFile
++        from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout
++
++        class Pkg(ConanFile):
++            settings = "os", "compiler", "arch", "build_type"
++            generators = "CMakeToolchain"
++            languages = "C"
++
++            def layout(self):
++                cmake_layout(self)
++
++            def build(self):
++                cmake = CMake(self)
++                cmake.configure()
++                cmake.build()
++        """)
++
++    cmakelists = textwrap.dedent("""
++        cmake_minimum_required(VERSION 3.15)
++        project(pkg C)
++        """)
++
++    client.save(
++        {
++            "conanfile.py": conanfile,
++            "CMakeLists.txt": cmakelists,
++        },
++        clean_first=True,
++    )
++
++    if platform.system() == "Windows":
++        # compiler.version=191 is already the default now
++        client.run("build . -s compiler.cstd=11 -s compiler.version=191", assert_error=True)
++        assert "The provided compiler.cstd=11 requires at least msvc>=192 but version 191 provided" \
++               in client.out
++    else:
++        client.run("build . -s compiler.cppstd=11")
++        # It doesn't fail
+diff --git a/test/functional/toolchains/gnu/test_pkgconfigdeps.py b/test/functional/toolchains/gnu/test_pkgconfigdeps.py
+index 802da3d2978..a684019c35b 100644
+--- a/test/functional/toolchains/gnu/test_pkgconfigdeps.py
++++ b/test/functional/toolchains/gnu/test_pkgconfigdeps.py
+@@ -113,3 +113,21 @@ def layout(self):
+     # Executing directly "meson test" fails if the bindir field does not exist
+     client.run_command("meson test -C test_package/build-release")
+     assert "1/1 ./src/example OK"
++
++
++def test_pkgconfigdeps_component_matches_package_name():
++    client = TestClient(path_with_spaces=False)
++    # Create library having build and test requires
++    conanfile = textwrap.dedent(r'''
++        from conan import ConanFile
++        class MyLib(ConanFile):
++            name = "hello"
++            version = "0.1"
++            def package_info(self):
++                self.cpp_info.components["mycomponent"].set_property("pkg_config_name", "hello")
++        ''')
++    client.save({"conanfile.py": conanfile}, clean_first=True)
++    client.run("export-pkg .")
++    client.run("install --requires=hello/0.1 -g PkgConfigDeps")
++    content = client.load("hello.pc")
++    assert "Conan component: hello-hello" in content
+diff --git a/test/integration/toolchains/microsoft/test_msbuild_toolchain.py b/test/integration/toolchains/microsoft/test_msbuild_toolchain.py
+index 05574dfc0a8..4c3366415e1 100644
+--- a/test/integration/toolchains/microsoft/test_msbuild_toolchain.py
++++ b/test/integration/toolchains/microsoft/test_msbuild_toolchain.py
+@@ -2,22 +2,30 @@
+ import textwrap
+ 
+ import pytest
+-from parameterized import parameterized
+ 
+ from conan.test.utils.tools import TestClient
+ 
+ 
+-@parameterized.expand([("msvc", "190", "dynamic"),
+-                       ("msvc", "191", "static")]
+-                      )
+-@pytest.mark.tool("visual_studio")
+ @pytest.mark.skipif(platform.system() != "Windows", reason="Only for windows")
+-def test_toolchain_win(compiler, version, runtime):
++@pytest.mark.tool("visual_studio")
++@pytest.mark.tool("clang", "16")
++@pytest.mark.parametrize(
++    "compiler, version",
++    [
++        ("msvc", "190"),
++        ("msvc", "191"),
++        ("clang", "16")
++    ],
++)
++@pytest.mark.parametrize("runtime", ["dynamic", "static"])
++@pytest.mark.parametrize("runtime_type", ["Release", "Debug"])
++def test_toolchain_win(compiler, version, runtime, runtime_type):
+     client = TestClient(path_with_spaces=False)
+     settings = {"compiler": compiler,
+                 "compiler.version": version,
+                 "compiler.cppstd": "14",
+                 "compiler.runtime": runtime,
++                "compiler.runtime_type": runtime_type,
+                 "build_type": "Release",
+                 "arch": "x86_64"}
+ 
+@@ -39,11 +47,20 @@ def generate(self):
+     props = client.load("conantoolchain_release_x64.props")
+     assert "<IncludeExternals>true</IncludeExternals>" in props
+     assert "<LanguageStandard>stdcpp14</LanguageStandard>" in props
+-    if version == "190":
+-        assert "<PlatformToolset>v140</PlatformToolset>" in props
+-    else:
+-        assert "<PlatformToolset>v141</PlatformToolset>" in props
++    if compiler == "msvc":
++        if version == "190":
++            assert "<PlatformToolset>v140</PlatformToolset>" in props
++        elif version == "191":
++            assert "<PlatformToolset>v141</PlatformToolset>" in props
++    elif compiler == "clang":
++        assert "<PlatformToolset>ClangCl</PlatformToolset>" in props
+     if runtime == "dynamic":
+-        assert "<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>" in props
++        if runtime_type == "Release":
++            assert "<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>" in props
++        else:
++            assert "<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>" in props
+     else:
+-        assert "<RuntimeLibrary>MultiThreaded</RuntimeLibrary>" in props
++        if runtime_type == "Release":
++            assert "<RuntimeLibrary>MultiThreaded</RuntimeLibrary>" in props
++        else:
++            assert "<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>" in props
+diff --git a/test/integration/toolchains/microsoft/test_msbuilddeps.py b/test/integration/toolchains/microsoft/test_msbuilddeps.py
+index 940bbe5f7b5..d43145cbec7 100644
+--- a/test/integration/toolchains/microsoft/test_msbuilddeps.py
++++ b/test/integration/toolchains/microsoft/test_msbuilddeps.py
+@@ -28,6 +28,57 @@ def test_msbuilddeps_maps_architecture_to_platform(arch, exp_platform):
+     assert expected_import in toolchain
+ 
+ 
++@pytest.mark.parametrize(
++    "build_type,arch,configuration,exp_platform",
++    [
++        ("Release", "x86", "Release - Test", "Win32"),
++        ("Debug", "x86_64", "Debug - Test", "x64"),
++    ],
++)
++@pytest.mark.parametrize(
++    "config_key,platform_key",
++    [
++        ("GlobalConfiguration", "GlobalPlatform"),
++        (None, None),
++    ],
++)
++def test_msbuilddeps_import_condition(build_type, arch, configuration, exp_platform, config_key, platform_key):
++    client = TestClient()
++    app = textwrap.dedent(f"""
++        from conan import ConanFile
++        from conan.tools.microsoft import MSBuildDeps
++        class App(ConanFile):
++            requires = ("lib/0.1")
++            settings = "arch", "build_type"
++            options = {{"configuration": ["ANY"],
++                       "platform": ["Win32", "x64"]}}
++
++            def generate(self):
++                ms = MSBuildDeps(self)
++                ms.configuration_key = "{config_key}"
++                ms.configuration = self.options.configuration
++                ms.platform_key = "{platform_key}"
++                ms.platform = self.options.platform
++                ms.generate()
++        """)
++    
++    # Remove custom set of keys to test default values
++    app = app.replace(f'ms.configuration_key = "{config_key}"', "") if config_key is None else app
++    app = app.replace(f'ms.platform_key = "{platform_key}"', "") if platform_key is None else app
++    config_key_expected = "Configuration" if config_key is None else config_key
++    platform_key_expected = "Platform" if platform_key is None else platform_key
++    
++    client.save({"app/conanfile.py": app, 
++                 "lib/conanfile.py": GenConanfile("lib", "0.1").with_package_type("header-library")})
++    client.run("create lib")
++    client.run(f'install app -s build_type={build_type} -s arch={arch} -o *:platform={exp_platform} -o *:configuration="{configuration}"')
++
++    assert os.path.exists(os.path.join(client.current_folder, "app", "conan_lib.props"))
++    dep = client.load(os.path.join(client.current_folder, "app", "conan_lib.props"))
++    expected_import = f"""<Import Condition="'$({config_key_expected})' == '{configuration}' And '$({platform_key_expected})' == '{exp_platform}'" Project="conan_lib_{configuration.lower()}_{exp_platform.lower()}.props"/>"""
++    assert expected_import in dep
++
++
+ def test_msbuilddeps_format_names():
+     c = TestClient()
+     conanfile = textwrap.dedent("""
+@@ -172,4 +223,4 @@ def test_msbuilddeps_relocatable(withdepl):
+             text = c.load(fn)
+             text = text.replace('\\', '/')
+             dir = c.current_folder.replace('\\', '/')
+-            assert dir not in text
++            assert dir not in text
+\ No newline at end of file
