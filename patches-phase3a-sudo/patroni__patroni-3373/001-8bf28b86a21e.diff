@@ -1,0 +1,179 @@
+diff --git a/patroni/dcs/etcd.py b/patroni/dcs/etcd.py
+index 1d8911d9e..3cd84ba47 100644
+--- a/patroni/dcs/etcd.py
++++ b/patroni/dcs/etcd.py
+@@ -101,40 +101,28 @@ def _do_resolve(host: str, port: int) -> List[_AddrInfo]:
+             return []
+ 
+ 
+-class AbstractEtcdClientWithFailover(abc.ABC, etcd.Client):
++class StaleEtcdNodeGuard(object):
+ 
+-    ERROR_CLS: Type[Exception]
++    def __init__(self) -> None:
++        self._reset_cluster_raft_term()
+ 
+-    def __init__(self, config: Dict[str, Any], dns_resolver: DnsCachingResolver, cache_ttl: int = 300) -> None:
++    def _reset_cluster_raft_term(self) -> None:
+         self._cluster_id = None
+         self._raft_term = 0
+-        self._dns_resolver = dns_resolver
+-        self.set_machines_cache_ttl(cache_ttl)
+-        self._machines_cache_updated = 0
+-        kwargs = {p: config.get(p) for p in ('host', 'port', 'protocol', 'use_proxies', 'version_prefix',
+-                                             'username', 'password', 'cert', 'ca_cert') if config.get(p)}
+-        super(AbstractEtcdClientWithFailover, self).__init__(read_timeout=config['retry_timeout'], **kwargs)
+-        # For some reason python3-etcd on debian and ubuntu are not based on the latest version
+-        # Workaround for the case when https://github.com/jplana/python-etcd/pull/196 is not applied
+-        self.http.connection_pool_kw.pop('ssl_version', None)
+-        self._config = config
+-        self._load_machines_cache()
+-        self._allow_reconnect = True
+-        # allow passing retry argument to api_execute in params
+-        self._comparison_conditions.add('retry')
+-        self._read_options.add('retry')
+-        self._del_conditions.add('retry')
+ 
+     def _check_cluster_raft_term(self, cluster_id: Optional[str], value: Union[None, str, int]) -> None:
+         """Check that observed Raft Term in Etcd cluster is increasing.
+ 
+-        If we observe that the new value is smaller than the previously known one, it could be an
+-        indicator that we connected to a stale node and should switch to some other node.
+-        However, we need to reset the memorized value when we notice that Cluster ID changed.
++        :param cluster_id: last observed Etcd Cluster ID
++        :param raft_term: last observed Raft Term
++
++        :raises:
++            :exc::`StaleEtcdNode` if last observed *raft_term* is smaller than previously known *raft_term*.
+         """
+         if not (cluster_id and value):
+             return
+ 
++        # We need to reset the memorized value when we notice that Cluster ID changed.
+         if self._cluster_id and self._cluster_id != cluster_id:
+             logger.warning('Etcd Cluster ID changed from %s to %s', self._cluster_id, cluster_id)
+             self._raft_term = 0
+@@ -151,6 +139,30 @@ def _check_cluster_raft_term(self, cluster_id: Optional[str], value: Union[None,
+             raise StaleEtcdNode
+         self._raft_term = raft_term
+ 
++
++class AbstractEtcdClientWithFailover(abc.ABC, etcd.Client, StaleEtcdNodeGuard):
++
++    ERROR_CLS: Type[Exception]
++
++    def __init__(self, config: Dict[str, Any], dns_resolver: DnsCachingResolver, cache_ttl: int = 300) -> None:
++        StaleEtcdNodeGuard.__init__(self)
++        self._dns_resolver = dns_resolver
++        self.set_machines_cache_ttl(cache_ttl)
++        self._machines_cache_updated = 0
++        kwargs = {p: config.get(p) for p in ('host', 'port', 'protocol', 'use_proxies', 'version_prefix',
++                                             'username', 'password', 'cert', 'ca_cert') if config.get(p)}
++        super(AbstractEtcdClientWithFailover, self).__init__(read_timeout=config['retry_timeout'], **kwargs)
++        # For some reason python3-etcd on debian and ubuntu are not based on the latest version
++        # Workaround for the case when https://github.com/jplana/python-etcd/pull/196 is not applied
++        self.http.connection_pool_kw.pop('ssl_version', None)
++        self._config = config
++        self._load_machines_cache()
++        self._allow_reconnect = True
++        # allow passing retry argument to api_execute in params
++        self._comparison_conditions.add('retry')
++        self._read_options.add('retry')
++        self._del_conditions.add('retry')
++
+     def _calculate_timeouts(self, etcd_nodes: int, timeout: Optional[float] = None) -> Tuple[int, float, int]:
+         """Calculate a request timeout and number of retries per single etcd node.
+         In case if the timeout per node is too small (less than one second) we will reduce the number of nodes.
+diff --git a/patroni/dcs/etcd3.py b/patroni/dcs/etcd3.py
+index e18a86fed..f2cf6f848 100644
+--- a/patroni/dcs/etcd3.py
++++ b/patroni/dcs/etcd3.py
+@@ -24,7 +24,8 @@
+ from ..utils import deep_compare, enable_keepalive, iter_response_objects, RetryFailedError, USER_AGENT
+ from . import catch_return_false_exception, Cluster, ClusterConfig, \
+     Failover, Leader, Member, Status, SyncState, TimelineHistory
+-from .etcd import AbstractEtcd, AbstractEtcdClientWithFailover, catch_etcd_errors, DnsCachingResolver, Retry
++from .etcd import AbstractEtcd, AbstractEtcdClientWithFailover, catch_etcd_errors, \
++    DnsCachingResolver, Retry, StaleEtcdNode, StaleEtcdNodeGuard
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -432,10 +433,11 @@ def watchprefix(self, key: str, start_revision: Optional[str] = None,
+         return self.watchrange(key, prefix_range_end(key), start_revision, filters, read_timeout)
+ 
+ 
+-class KVCache(Thread):
++class KVCache(StaleEtcdNodeGuard, Thread):
+ 
+     def __init__(self, dcs: 'Etcd3', client: 'PatroniEtcd3Client') -> None:
+-        super(KVCache, self).__init__()
++        Thread.__init__(self)
++        StaleEtcdNodeGuard.__init__(self)
+         self.daemon = True
+         self._dcs = dcs
+         self._client = client
+@@ -505,7 +507,10 @@ def _process_message(self, message: Dict[str, Any]) -> None:
+         logger.debug('Received message: %s', message)
+         if 'error' in message:
+             raise _raise_for_data(message)
+-        events: List[Dict[str, Any]] = message.get('result', {}).get('events', [])
++        result = message.get('result', EMPTY_DICT)
++        header = result.get('header', EMPTY_DICT)
++        self._check_cluster_raft_term(header.get('cluster_id'), header.get('raft_term'))
++        events: List[Dict[str, Any]] = result.get('events', [])
+         for event in events:
+             self._process_event(event)
+ 
+@@ -539,8 +544,11 @@ def _do_watch(self, revision: str) -> None:
+ 
+     def _build_cache(self) -> None:
+         result = self._dcs.retry(self._client.prefix, self._dcs.cluster_prefix)
++        header = result.get('header', EMPTY_DICT)
+         with self._object_cache_lock:
++            self._reset_cluster_raft_term()
+             self._object_cache = {node['key']: node for node in result.get('kvs', [])}
++            self._check_cluster_raft_term(header.get('cluster_id'), header.get('raft_term'))
+         with self.condition:
+             self._is_ready = True
+             self.condition.notify()
+@@ -586,6 +594,12 @@ def kill_stream(self) -> None:
+ 
+     def is_ready(self) -> bool:
+         """Must be called only when holding the lock on `condition`"""
++        if self._is_ready:
++            try:
++                self._client._check_cluster_raft_term(self._cluster_id, self._raft_term)
++            except StaleEtcdNode:
++                self._is_ready = False
++                self.kill_stream()
+         return self._is_ready
+ 
+ 
+diff --git a/tests/test_etcd3.py b/tests/test_etcd3.py
+index a201c3bed..ae52b7420 100644
+--- a/tests/test_etcd3.py
++++ b/tests/test_etcd3.py
+@@ -51,7 +51,7 @@ def mock_urlopen(self, method, url, **kwargs):
+     elif url.endswith('/watch'):
+         key = base64_encode('/patroni/test/config')
+         ret.read_chunked = Mock(return_value=[json.dumps({
+-            'result': {'events': [
++            'result': {'header': {'cluster_id': '1', 'raft_term': 1}, 'events': [
+                 {'kv': {'key': key, 'value': base64_encode('bar'), 'mod_revision': '2'}},
+                 {'kv': {'key': key, 'value': base64_encode('buzz'), 'mod_revision': '3'}},
+                 {'type': 'DELETE', 'kv': {'key': key, 'mod_revision': '4'}},
+@@ -120,6 +120,14 @@ def test_kill_stream(self):
+             type(mock_conn).sock = PropertyMock(side_effect=Exception)
+             self.kv_cache.kill_stream()
+ 
++    @patch.object(urllib3.PoolManager, 'urlopen', mock_urlopen)
++    def test_is_ready(self):
++        self.kv_cache._build_cache()
++        with self.kv_cache.condition:
++            self.kv_cache._is_ready = True
++            self.client._raft_term = 2
++            self.assertFalse(self.kv_cache.is_ready())
++
+ 
+ class TestPatroniEtcd3Client(BaseTestEtcd3):
+ 

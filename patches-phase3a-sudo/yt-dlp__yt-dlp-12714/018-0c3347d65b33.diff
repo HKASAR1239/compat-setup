@@ -1,0 +1,13 @@
+diff --git a/yt_dlp/extractor/common.py b/yt_dlp/extractor/common.py
+index 448a4ed71404..4c1bc4cf4712 100644
+--- a/yt_dlp/extractor/common.py
++++ b/yt_dlp/extractor/common.py
+@@ -2317,7 +2317,7 @@ def build_stream_name():
+                 last_stream_inf = {}
+ 
+         # Some audio-only formats only have a GROUP-ID without any other quality/bitrate/codec info
+-        # Each audio GROUP-ID corresponds with one or more video-only formats' AUDIO attribute
++        # Each audio GROUP-ID corresponds with one or more video formats' AUDIO attribute
+         # For sorting purposes, set source_preference based on the quality of the video formats they are grouped with
+         # See https://github.com/yt-dlp/yt-dlp/issues/11178
+         audio_groups_by_quality = orderedSet(f['_audio_group_id'] for f in sorted(

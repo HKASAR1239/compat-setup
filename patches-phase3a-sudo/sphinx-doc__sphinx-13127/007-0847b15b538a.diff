@@ -1,0 +1,15 @@
+diff --git a/tests/test_builders/test_build_linkcheck.py b/tests/test_builders/test_build_linkcheck.py
+index abe32c74aef..f869b2c06cc 100644
+--- a/tests/test_builders/test_build_linkcheck.py
++++ b/tests/test_builders/test_build_linkcheck.py
+@@ -978,8 +978,8 @@ def test_ignore_redirection(app):
+         'status': 'ignored',
+         'filename': 'index.rst',
+         'lineno': 1,
+-        'uri': f'http://{address}/redirected',
+-        'info': '',
++        'uri': f'http://{address}/',
++        'info': '/redirected',
+     }
+ 
+ 

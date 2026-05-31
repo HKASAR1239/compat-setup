@@ -1,0 +1,14 @@
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 6a97ceaff00..47490d47964 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -40,6 +40,9 @@ Deprecations
+ 
+ Bug fixes
+ ~~~~~~~~~
++- Preserve conversion of timezone-aware pandas Datetime arrays to numpy object arrays
++  (:issue:`9026`, :pull:`9042`).
++  By `Ilan Gold <https://github.com/ilan-gold>`_.
+ 
+ 
+ Documentation

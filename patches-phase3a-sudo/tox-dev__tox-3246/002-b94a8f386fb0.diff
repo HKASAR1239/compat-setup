@@ -1,0 +1,13 @@
+diff --git a/.pre-commit-config.yaml b/.pre-commit-config.yaml
+index 7833635f1a..5b48d08fe3 100644
+--- a/.pre-commit-config.yaml
++++ b/.pre-commit-config.yaml
+@@ -25,7 +25,7 @@ repos:
+       - id: pyproject-fmt
+         additional_dependencies: ["tox>=4.12.1"]
+   - repo: https://github.com/astral-sh/ruff-pre-commit
+-    rev: "v0.3.2"
++    rev: "v0.3.3"
+     hooks:
+       - id: ruff-format
+       - id: ruff

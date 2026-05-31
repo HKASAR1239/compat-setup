@@ -1,0 +1,13 @@
+diff --git a/CHANGES.rst b/CHANGES.rst
+index e20c1e4571e..c6bb532fc0c 100644
+--- a/CHANGES.rst
++++ b/CHANGES.rst
+@@ -29,6 +29,8 @@ Bugs fixed
+ * LaTeX: fix a ``7.4.0`` typo in a default for ``\sphinxboxsetup``
+   (refs: PR #13152).
+   Patch by Jean-François B.
++* #13188: autodoc: fix detection of class methods implemented in C.
++  Patch by Bénédikt Tran.
+ 
+ Testing
+ -------

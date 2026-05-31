@@ -1,0 +1,14 @@
+diff --git a/doc/usage/configuration.rst b/doc/usage/configuration.rst
+index 6b1673c97a3..bb8eb9c5853 100644
+--- a/doc/usage/configuration.rst
++++ b/doc/usage/configuration.rst
+@@ -3701,7 +3701,8 @@ and which failures and redirects it ignores.
+    A list of regular expressions that match URIs that should not be checked
+    when doing a ``linkcheck`` build.
+ 
+-   Server-issued redirects that match ignored URIs will not be followed.
++   Server-issued redirects that match :confval:`ignored URIs <linkcheck_ignore>`
++   will not be followed.
+ 
+    Example:
+ 

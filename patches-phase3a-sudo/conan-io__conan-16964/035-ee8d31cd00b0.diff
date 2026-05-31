@@ -1,0 +1,207 @@
+diff --git a/conan/tools/cmake/cmakedeps2/cmakedeps.py b/conan/tools/cmake/cmakedeps2/cmakedeps.py
+index cb2b54dc901..7b4156b2fa8 100644
+--- a/conan/tools/cmake/cmakedeps2/cmakedeps.py
++++ b/conan/tools/cmake/cmakedeps2/cmakedeps.py
+@@ -110,10 +110,6 @@ def get_cmake_filename(self, dep, module_mode=None):
+         ret = self.get_property("cmake_file_name", dep)
+         return ret or dep.ref.name
+ 
+-    @property
+-    def config_suffix(self):
+-        return "_{}".format(self.configuration.upper()) if self.configuration else ""
+-
+     def _get_find_mode(self, dep):
+         """
+         :param dep: requirement
+diff --git a/conan/tools/cmake/cmakedeps2/config.py b/conan/tools/cmake/cmakedeps2/config.py
+index 3249bcb692c..2a393141091 100644
+--- a/conan/tools/cmake/cmakedeps2/config.py
++++ b/conan/tools/cmake/cmakedeps2/config.py
+@@ -34,16 +34,12 @@ def _context(self):
+         # FIXME: build_module_paths coming from last config only
+         build_modules_paths = [f.replace("\\", "/") for f in build_modules_paths]
+         return {"pkg_name": pkg_name,
+-                "config_suffix": self._cmakedeps.config_suffix,
+                 "targets_include_file": targets_include,
+                 "build_modules_paths": build_modules_paths}
+ 
+     @property
+     def _template(self):
+         return textwrap.dedent("""\
+-        {%- macro pkg_var(pkg_name, var, config_suffix) -%}
+-             {{'${'+pkg_name+'_'+var+config_suffix+'}'}}
+-        {%- endmacro -%}
+         # Requires CMake > 3.15
+         if(${CMAKE_VERSION} VERSION_LESS "3.15")
+             message(FATAL_ERROR "The 'CMakeDeps' generator only works with CMake >= 3.15")
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+index 6360e0db382..37e5a55d42a 100644
+--- a/conan/tools/cmake/cmakedeps2/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -25,8 +25,9 @@ def content(self):
+     @property
+     def filename(self):
+         f = self._cmakedeps.get_cmake_filename(self._conanfile)
++        config = self._conanfile.settings.get_safe("build_type", "none").lower()
+         build = "Build" if self._conanfile.context == CONTEXT_BUILD else ""
+-        return f"{f}-Targets{build}-{self._cmakedeps.configuration.lower()}.cmake"
++        return f"{f}-Targets{build}-{config}.cmake"
+ 
+     def _requires(self, info, components):
+         result = []
+@@ -69,7 +70,8 @@ def _context(self):
+         config = self._conanfile.settings.get_safe("build_type")
+         config = config.upper() if config else None
+         pkg_folder = self._conanfile.package_folder.replace("\\", "/")
+-        pkg_folder_var = f"{pkg_name}_PACKAGE_FOLDER_{config}"
++        config_folder = f"_{config}" if config else ""
++        pkg_folder_var = f"{pkg_name}_PACKAGE_FOLDER{config_folder}"
+ 
+         libs = {}
+         # The BUILD context does not generate libraries targets atm
+@@ -217,6 +219,13 @@ def _escape_cmake_string(values):
+     def _template(self):
+         # TODO: Check why not set_property instead of target_link_libraries
+         return textwrap.dedent("""\
++        {%- macro config_wrapper(config, value) -%}
++             {% if config -%}
++             $<$<CONFIG:{{config}}>:{{value}}>
++             {%- else -%}
++             {{value}}
++             {%- endif %}
++        {%- endmacro -%}
+         set({{pkg_folder_var}} "{{pkg_folder}}")
+ 
+         # Dependencies finding
+@@ -237,28 +246,28 @@ def _template(self):
+         endif()
+         {% if lib_info.get("includedirs") %}
+         set_property(TARGET {{lib}} APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES
+-                     $<$<CONFIG:{{config}}>:{{lib_info["includedirs"]}}>)
++                     {{config_wrapper(config, lib_info["includedirs"])}})
+         {% endif %}
+         {% if lib_info.get("defines") %}
+         set_property(TARGET {{lib}} APPEND PROPERTY INTERFACE_COMPILE_DEFINITIONS
+-                     $<$<CONFIG:{{config}}>:{{lib_info["defines"]}}>)
++                     {{config_wrapper(config, lib_info["defines"])}})
+         {% endif %}
+         {% if lib_info.get("cxxflags") %}
+         set_property(TARGET {{lib}} APPEND PROPERTY INTERFACE_COMPILE_OPTIONS
+-                     $<$<COMPILE_LANGUAGE:CXX>:$<$<CONFIG:{{config}}>:{{lib_info["cxxflags"]}}>>)
++                     $<$<COMPILE_LANGUAGE:CXX>:{{config_wrapper(config, lib_info["cxxflags"])}}>)
+         {% endif %}
+         {% if lib_info.get("cflags") %}
+         set_property(TARGET {{lib}} APPEND PROPERTY INTERFACE_COMPILE_OPTIONS
+-                     $<$<COMPILE_LANGUAGE:C>:$<$<CONFIG:{{config}}>:{{lib_info["cflags"]}}>>)
++                     $<$<COMPILE_LANGUAGE:C>:{{config_wrapper(config, lib_info["cflags"])}}>)
+         {% endif %}
+         {% if lib_info.get("sharedlinkflags") %}
+         set_property(TARGET {{lib}} APPEND PROPERTY INTERFACE_LINK_OPTIONS
+-                      $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>:$<$<CONFIG:{{config}}>:{{lib_info["sharedlinkflags"]}}>>
+-                      $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>:$<$<CONFIG:{{config}}>:{{lib_info["sharedlinkflags"]}}>>)
++                      $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>:{{config_wrapper(config, lib_info["sharedlinkflags"])}}>
++                      $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>:{{config_wrapper(config, lib_info["sharedlinkflags"])}}>)
+         {% endif %}
+         {% if lib_info.get("exelinkflags") %}
+         set_property(TARGET {{lib}} APPEND PROPERTY INTERFACE_LINK_OPTIONS
+-                      $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:$<$<CONFIG:{{config}}>:{{lib_info["exelinkflags"]}}>>)
++                      $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:{{config_wrapper(config, lib_info["exelinkflags"])}}>)
+         {% endif %}
+ 
+         {% if lib_info.get("location") %}
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+index a6d63c9449a..217819cc073 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+@@ -268,6 +268,7 @@ def test_libs_components(self, matrix_client_components):
+         c.save({"CMakeLists.txt": cmake,
+                 "src/app.cpp": app_cpp})
+         c.run("build . -c tools.cmake.cmakedeps:new=will_break_next")
++        print(c.out)
+         assert "Conan: Target declared imported STATIC library 'matrix::vector'" in c.out
+         assert "Conan: Target declared imported STATIC library 'matrix::module'" in c.out
+         if platform.system() == "Windows":
+@@ -557,6 +558,83 @@ def package_info(self):
+         assert "vector: Release!" in c.out
+ 
+ 
++@pytest.mark.tool("cmake")
++class TestHeaders:
++    def test_libs(self, matrix_client):
++        c = matrix_client
++        conanfile = textwrap.dedent("""
++            from conan import ConanFile
++            from conan.tools.files import copy
++            class EngineHeader(ConanFile):
++                name = "engine"
++                version = "1.0"
++                requires = "matrix/1.0"
++                exports_sources = "*.h"
++                settings = "compiler"
++                def package(self):
++                    copy(self, "*.h", src=self.source_folder, dst=self.package_folder)
++                def package_id(self):
++                    self.info.clear()
++                def package_info(self):
++                    self.cpp_info.defines = ["MY_MATRIX_HEADERS_DEFINE=1"]
++                    # Few flags to cover that CMakeDeps doesn't crash with them
++                    if self.settings.compiler == "msvc":
++                        self.cpp_info.cxxflags = ["/Zc:__cplusplus"]
++                        self.cpp_info.cflags = ["/Zc:__cplusplus"]
++                        self.cpp_info.system_libs = ["ws2_32"]
++                    else:
++                        self.cpp_info.system_libs = ["m"]
++                        # Just to verify CMake don't break
++                        self.cpp_info.sharedlinkflags = ["-z now", "-z relro"]
++                        self.cpp_info.exelinkflags = ["-z now", "-z relro"]
++             """)
++        engine_h = textwrap.dedent("""
++            #pragma once
++            #include <iostream>
++            #include "matrix.h"
++            #ifndef MY_MATRIX_HEADERS_DEFINE
++            #error "Fatal error MY_MATRIX_HEADERS_DEFINE not defined"
++            #endif
++            #ifdef _WIN32
++              #define ENGINE_EXPORT __declspec(dllexport)
++            #else
++              #define ENGINE_EXPORT
++            #endif
++            ENGINE_EXPORT void engine(){ std::cout << "Engine!" <<std::endl; matrix(); }
++            """)
++
++        c.save({"conanfile.py": conanfile,
++                "include/engine.h": engine_h})
++        c.run("create .")
++
++        app = textwrap.dedent("""
++            from conan import ConanFile
++            from conan.tools.cmake import CMake
++            class EngineHeader(ConanFile):
++                settings = "os", "compiler", "build_type", "arch"
++                requires = "engine/1.0"
++                generators = "CMakeDeps", "CMakeToolchain"
++                def build(self):
++                    cmake = CMake(self)
++                    cmake.configure()
++                    cmake.build()
++             """)
++        cmake = textwrap.dedent("""
++            cmake_minimum_required(VERSION 3.15)
++            project(app CXX)
++            find_package(engine CONFIG REQUIRED)
++            add_executable(app src/app.cpp)
++            target_link_libraries(app PRIVATE engine::engine)
++            """)
++        c.save({"conanfile.py": app,
++                "CMakeLists.txt": cmake,
++                "src/app.cpp": gen_function_cpp(name="main", includes=["engine"], calls=["engine"])},
++               clean_first=True)
++        c.run("build . -c tools.cmake.cmakedeps:new=will_break_next")
++        assert "Conan: Target declared imported STATIC library 'matrix::matrix'" in c.out
++        assert "Conan: Target declared imported INTERFACE library 'engine::engine'" in c.out
++
++
+ @pytest.mark.tool("cmake")
+ @pytest.mark.parametrize("tool_requires", [True, False])
+ def test_build_modules_custom_script(tool_requires):

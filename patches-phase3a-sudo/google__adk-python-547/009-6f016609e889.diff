@@ -1,0 +1,129 @@
+diff --git a/src/google/adk/tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.py b/src/google/adk/tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.py
+index d214121406..64eb204fbd 100644
+--- a/src/google/adk/tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.py
++++ b/src/google/adk/tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.py
+@@ -110,12 +110,11 @@ def _collect_operations(
+         operation_dict = path_item.get(method)
+         if operation_dict is None:
+           continue
+-      
++
+         # Append path-level parameters
+-        operation_dict['parameters'] = (
+-            operation_dict.get("parameters", [])
+-            + path_item.get("parameters", [])
+-        )
++        operation_dict["parameters"] = operation_dict.get(
++            "parameters", []
++        ) + path_item.get("parameters", [])
+ 
+         # If operation ID is missing, assign an operation id based on path
+         # and method
+diff --git a/tests/unittests/tools/openapi_tool/openapi_spec_parser/test_openapi_spec_parser.py b/tests/unittests/tools/openapi_tool/openapi_spec_parser/test_openapi_spec_parser.py
+index 4d6a751df9..053da7598c 100644
+--- a/tests/unittests/tools/openapi_tool/openapi_spec_parser/test_openapi_spec_parser.py
++++ b/tests/unittests/tools/openapi_tool/openapi_spec_parser/test_openapi_spec_parser.py
+@@ -627,48 +627,57 @@ def test_parse_spec_with_duplicate_parameter_names(openapi_spec_generator):
+ 
+ 
+ def test_parse_spec_with_path_level_parameters(openapi_spec_generator):
+-    """Test that operation parameters are correctly combined with path-level parameters."""
+-    openapi_spec = {
+-        "openapi": "3.1.0",
+-        "info": {"title": "Combine Parameters API", "version": "1.0.0"},
+-        "paths": {
+-            "/test": {
+-                "parameters": [
+-                    {"name": "global_param", "in": "query", "schema": {"type": "string"}}
+-                ],
+-                "get": {
+-                    "parameters": [
+-                        {"name": "local_param", "in": "header", "schema": {"type": "integer"}}
+-                    ],
+-                    "operationId": "testGet",
+-                    "responses": {
+-                        "200": {
+-                            "description": "Successful response",
+-                            "content": {
+-                                "application/json": {"schema": {"type": "string"}}
+-                            },
+-                        }
+-                    },
+-                },
+-            }
+-        },
+-    }
+-
+-    parsed_operations = openapi_spec_generator.parse(openapi_spec)
+-    assert len(parsed_operations) == 1
+-
+-    operation = parsed_operations[0]
+-    assert len(operation.parameters) == 2
+-
+-    # Verify the combined parameters
+-    global_param = next((p for p in operation.parameters if p.original_name == "global_param"), None)
+-    local_param = next((p for p in operation.parameters if p.original_name == "local_param"), None)
+-
+-    assert global_param is not None
+-    assert global_param.param_location == "query"
+-    assert global_param.type_value is str
+-
+-    assert local_param is not None
+-    assert local_param.param_location == "header"
+-    assert local_param.type_value is int
+-    
+\ No newline at end of file
++  """Test that operation parameters are correctly combined with path-level parameters."""
++  openapi_spec = {
++      "openapi": "3.1.0",
++      "info": {"title": "Combine Parameters API", "version": "1.0.0"},
++      "paths": {
++          "/test": {
++              "parameters": [{
++                  "name": "global_param",
++                  "in": "query",
++                  "schema": {"type": "string"},
++              }],
++              "get": {
++                  "parameters": [{
++                      "name": "local_param",
++                      "in": "header",
++                      "schema": {"type": "integer"},
++                  }],
++                  "operationId": "testGet",
++                  "responses": {
++                      "200": {
++                          "description": "Successful response",
++                          "content": {
++                              "application/json": {"schema": {"type": "string"}}
++                          },
++                      }
++                  },
++              },
++          }
++      },
++  }
++
++  parsed_operations = openapi_spec_generator.parse(openapi_spec)
++  assert len(parsed_operations) == 1
++
++  operation = parsed_operations[0]
++  assert len(operation.parameters) == 2
++
++  # Verify the combined parameters
++  global_param = next(
++      (p for p in operation.parameters if p.original_name == "global_param"),
++      None,
++  )
++  local_param = next(
++      (p for p in operation.parameters if p.original_name == "local_param"),
++      None,
++  )
++
++  assert global_param is not None
++  assert global_param.param_location == "query"
++  assert global_param.type_value is str
++
++  assert local_param is not None
++  assert local_param.param_location == "header"
++  assert local_param.type_value is int

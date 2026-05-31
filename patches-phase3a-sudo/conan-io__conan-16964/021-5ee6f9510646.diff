@@ -1,0 +1,209 @@
+diff --git a/conan/tools/cmake/__init__.py b/conan/tools/cmake/__init__.py
+index c2e91efc37a..8d49c6e3316 100644
+--- a/conan/tools/cmake/__init__.py
++++ b/conan/tools/cmake/__init__.py
+@@ -4,7 +4,7 @@
+ 
+ 
+ def CMakeDeps(conanfile):  # noqa
+-    if conanfile.conf.get("tools.cmake.cmakedeps:new") == "will_break_next":
++    if conanfile.conf.get("tools.cmake.cmakedeps:new", choices=["will_break_next"]):
+         from conan.tools.cmake.cmakedeps2.cmakedeps import CMakeDeps2
+         return CMakeDeps2(conanfile)
+     from conan.tools.cmake.cmakedeps.cmakedeps import CMakeDeps as _CMakeDeps
+diff --git a/conan/tools/cmake/cmakedeps2/__init__.py b/conan/tools/cmake/cmakedeps2/__init__.py
+index 8b6329c26ed..e69de29bb2d 100644
+--- a/conan/tools/cmake/cmakedeps2/__init__.py
++++ b/conan/tools/cmake/cmakedeps2/__init__.py
+@@ -1,4 +0,0 @@
+-FIND_MODE_MODULE = "module"
+-FIND_MODE_CONFIG = "config"
+-FIND_MODE_NONE = "none"
+-FIND_MODE_BOTH = "both"
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+index c4a7f492409..88d93da47ae 100644
+--- a/conan/tools/cmake/cmakedeps2/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -34,12 +34,7 @@ def _requires(self, info, components):
+         if not requires and not components:  # global cpp_info without components definition
+             for dependency in transitive_reqs.values():
+                 dep_pkg_name = dependency.ref.name
+-                dep_cpp_info = dependency.cpp_info
+-                if dep_cpp_info.has_components:
+-                    for name, component in dep_cpp_info.components.items():
+-                        result.append(f"{dep_pkg_name}::{name}")
+-                else:
+-                    result.append(f"{dep_pkg_name}::{dep_pkg_name}")
++                result.append(f"{dep_pkg_name}::{dep_pkg_name}")
+             return result
+ 
+         for required_pkg, required_comp in requires:
+@@ -80,6 +75,7 @@ def _add_libs(info, component_name=None):
+                                    for i in info.includedirs) if info.includedirs else ""
+             requires = " ".join(self._requires(info, self._conanfile.cpp_info.components))
+             cxxflags = " ".join(info.cxxflags)
++            # TODO: Other cflags, linkflags
+             if info.libs:  # TODO: Handle component_name for libs
+                 if len(info.libs) != 1:
+                     raise ConanException(f"New CMakeDeps only allows 1 lib per component:\n"
+diff --git a/conans/model/build_info.py b/conans/model/build_info.py
+index 2621e9cd6fd..b31410a4d54 100644
+--- a/conans/model/build_info.py
++++ b/conans/model/build_info.py
+@@ -133,6 +133,13 @@ def deserialize(contents):
+             setattr(result, f"_{field}", value)
+         return result
+ 
++    def clone(self):
++        result = _Component()
++        for k, v in vars(self).items():
++            if k.startswith("_"):
++                setattr(result, k, copy.copy(v))
++        return result
++
+     @property
+     def includedirs(self):
+         if self._includedirs is None:
+@@ -549,12 +556,15 @@ def __setattr__(self, attr, value):
+ 
+     def serialize(self):
+         ret = {"root": self._package.serialize()}
++        if self.default_components:
++            ret["default_components"] = self.default_components
+         for component_name, info in self.components.items():
+             ret[component_name] = info.serialize()
+         return ret
+ 
+     def deserialize(self, content):
+         self._package = _Component.deserialize(content.pop("root"))
++        self.default_components = content.get("default_components")
+         for component_name, info in content.items():
+             self.components[component_name] = _Component.deserialize(info)
+         return self
+@@ -698,15 +708,16 @@ def required_components(self):
+     def deduce_full_cpp_info(self, conanfile):
+         pkg_type = conanfile.package_type
+ 
+-        result = CppInfo().deserialize(self.serialize())  # a deep copy, via serialization
++        result = CppInfo()  # clone it
++        result._package = self._package.clone()
+         result.default_components = self.default_components
++        result.components = {k: v.clone() for k, v in self.components.items()}
+         if self.libs and len(self.libs) > 1:  # expand in multiple components
+-            ConanOutput().warning(f"{conanfile }The 'cpp_info.libs' contain more than 1 "
+-                                  "library, this is deprecated for new CMakeDeps usage."
++            ConanOutput().warning(f"{conanfile}: The 'cpp_info.libs' contain more than 1 library. "
+                                   "Define 'cpp_info.components' instead.")
+-            assert not self.components, "cpp_inf shouldn't have .libs and components"
++            assert not self.components, f"{conanfile} cpp_info shouldn't have .libs and .components"
+             for lib in self.libs:
+-                c = _Component.deserialize(self._package.serialize())
++                c = self._package.clone()
+                 c.libs = [lib]
+                 result.components[lib] = c
+             result.libs = []
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+index c16332ea0d9..63bf20b2aee 100644
+--- a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new.py
+@@ -315,7 +315,6 @@ def test_libs_components_transitive(self, matrix_client_components):
+                                      calls=["physix", "module"])
+ 
+         conanfile = textwrap.dedent("""
+-            from os.path import join
+             from conan import ConanFile
+             from conan.tools.cmake import CMake
+             from conan.tools.files import copy
+@@ -418,3 +417,92 @@ def package_info(self):
+         assert "bots: Release!" in c.out
+         assert "physix: Release!" in c.out
+         assert "vector: Release!" in c.out
++
++    def test_libs_components_multilib(self):
++        """
++        cpp_info.libs = ["lib1", "lib2"]
++        """
++        c = TestClient()
++
++        from conan.test.assets.sources import gen_function_h
++        vector_h = gen_function_h(name="vector")
++        from conan.test.assets.sources import gen_function_cpp
++        vector_cpp = gen_function_cpp(name="vector", includes=["vector"])
++        module_h = gen_function_h(name="module")
++        module_cpp = gen_function_cpp(name="module", includes=["module"])
++
++        conanfile = textwrap.dedent("""
++            from conan import ConanFile
++            from conan.tools.cmake import CMake
++
++            class Matrix(ConanFile):
++                name = "matrix"
++                version = "1.0"
++                settings = "os", "compiler", "build_type", "arch"
++                generators = "CMakeToolchain"
++                exports_sources = "src/*", "CMakeLists.txt"
++
++                generators = "CMakeDeps", "CMakeToolchain"
++
++                def build(self):
++                    cmake = CMake(self)
++                    cmake.configure()
++                    cmake.build()
++
++                def package(self):
++                    cmake = CMake(self)
++                    cmake.install()
++
++                def package_info(self):
++                    self.cpp_info.libs = ["module", "vector"]
++                  """)
++
++        cmakelists = textwrap.dedent("""
++            set(CMAKE_CXX_COMPILER_WORKS 1)
++            set(CMAKE_CXX_ABI_COMPILED 1)
++            cmake_minimum_required(VERSION 3.15)
++            project(matrix CXX)
++
++            add_library(module src/module.cpp)
++            add_library(vector src/vector.cpp)
++
++            set_target_properties(vector PROPERTIES PUBLIC_HEADER "src/vector.h")
++            set_target_properties(module PROPERTIES PUBLIC_HEADER "src/module.h")
++            install(TARGETS module vector)
++            """)
++        c.save({"src/module.h": module_h,
++                "src/module.cpp": module_cpp,
++                "src/vector.h": vector_h,
++                "src/vector.cpp": vector_cpp,
++                "CMakeLists.txt": cmakelists,
++                "conanfile.py": conanfile})
++        c.run("create .")
++
++        c.save({}, clean_first=True)
++        c.run("new cmake_exe -d name=app -d version=0.1 -d requires=matrix/1.0")
++        cmake = textwrap.dedent("""
++            cmake_minimum_required(VERSION 3.15)
++            project(app CXX)
++
++            find_package(matrix CONFIG REQUIRED)
++
++            add_executable(app src/app.cpp)
++            target_link_libraries(app PRIVATE matrix::matrix)
++
++            install(TARGETS app)
++            """)
++        app_cpp = textwrap.dedent("""
++            #include "vector.h"
++            #include "module.h"
++            int main() { vector();module();}
++            """)
++        c.save({"CMakelists.txt": cmake,
++                "src/app.cpp": app_cpp})
++        c.run("create . -c tools.cmake.cmakedeps:new=will_break_next")
++        assert "Conan: Target declared imported STATIC library 'matrix::vector'" in c.out
++        assert "Conan: Target declared imported STATIC library 'matrix::module'" in c.out
++        assert "Conan: Target declared imported INTERFACE library 'matrix::matrix'" in c.out
++
++        assert "vector: Release!" in c.out
++        assert "module: Release!" in c.out
++        assert "vector: Release!" in c.out

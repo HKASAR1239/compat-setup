@@ -1,0 +1,7 @@
+diff --git a/news/3368.bugfix.md b/news/3368.bugfix.md
+new file mode 100644
+index 0000000000..ea143c03d0
+--- /dev/null
++++ b/news/3368.bugfix.md
+@@ -0,0 +1 @@
++Fix a performance issue because pypi source credentials were being queried many times from keyring.

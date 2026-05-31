@@ -1,0 +1,8 @@
+diff --git a/changelog.d/1610.bugfix.md b/changelog.d/1610.bugfix.md
+index 4ef0daa72..79d5fc17f 100644
+--- a/changelog.d/1610.bugfix.md
++++ b/changelog.d/1610.bugfix.md
+@@ -1 +1 @@
+-Fix incorrect order of flags when using `pipx upgrade`.
+\ No newline at end of file
++Fix incorrect order of flags when using `pipx upgrade`.

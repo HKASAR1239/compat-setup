@@ -1,0 +1,12 @@
+diff --git a/packages/opentelemetry-instrumentation-openai/pyproject.toml b/packages/opentelemetry-instrumentation-openai/pyproject.toml
+index 66f997c8cc..f3d296facd 100644
+--- a/packages/opentelemetry-instrumentation-openai/pyproject.toml
++++ b/packages/opentelemetry-instrumentation-openai/pyproject.toml
+@@ -28,7 +28,6 @@ opentelemetry-api = "^1.28.0"
+ opentelemetry-instrumentation = ">=0.50b0"
+ opentelemetry-semantic-conventions = ">=0.50b0"
+ opentelemetry-semantic-conventions-ai = "0.4.11"
+-tiktoken = ">=0.6.0, <1"
+ 
+ [tool.poetry.group.dev.dependencies]
+ autopep8 = "^2.2.0"

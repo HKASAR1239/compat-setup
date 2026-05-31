@@ -1,0 +1,36 @@
+diff --git a/patroni/postgresql/config.py b/patroni/postgresql/config.py
+index e4dda975a..13139688f 100644
+--- a/patroni/postgresql/config.py
++++ b/patroni/postgresql/config.py
+@@ -617,7 +617,9 @@ def format_dsn(self, params: Dict[str, Any]) -> str:
+         def escape(value: Any) -> str:
+             return re.sub(r'([\'\\ ])', r'\\\1', str(value))
+ 
+-        return ' '.join('{0}={1}'.format(kw, escape(params[kw])) for kw in keywords if params.get(kw) is not None)
++        key_ver = {'gssencmode': 120000, 'channel_binding': 130000, 'sslnegotiation': 170000}
++        return ' '.join('{0}={1}'.format(kw, escape(params[kw])) for kw in keywords
++                        if params.get(kw) is not None and self._postgresql.major_version >= key_ver.get(kw, 0))
+ 
+     def _write_recovery_params(self, fd: ConfigWriter, recovery_params: CaseInsensitiveDict) -> None:
+         if self._postgresql.major_version >= 90500:
+diff --git a/tests/test_postgresql.py b/tests/test_postgresql.py
+index bd271e59f..aa46e6751 100644
+--- a/tests/test_postgresql.py
++++ b/tests/test_postgresql.py
+@@ -1182,3 +1182,16 @@ def test_load_current_server_parameters(self):
+         self.assertEqual(dict(self.p.config._recovery_params),
+                          {'primary_conninfo': {'host': 'a', 'port': '5433', 'passfile': '/blabla', 'sslmode': 'prefer',
+                           'gssencmode': 'prefer', 'channel_binding': 'prefer', 'sslnegotiation': 'postgres'}})
++
++    def test_format_dsn(self):
++        params = {'host': '1', 'port': 2, 'gssencmode': 'prefer',
++                  'channel_binding': 'prefer', 'sslnegotiation': 'postgres'}
++        self.p._major_version = 100000
++        self.assertEqual(self.p.config.format_dsn(params), 'host=1 port=2')
++        self.p._major_version = 120000
++        self.assertEqual(self.p.config.format_dsn(params), 'host=1 port=2 gssencmode=prefer')
++        self.p._major_version = 130000
++        self.assertEqual(self.p.config.format_dsn(params), 'host=1 port=2 gssencmode=prefer channel_binding=prefer')
++        self.p._major_version = 170000
++        self.assertEqual(self.p.config.format_dsn(params),
++                         'host=1 port=2 gssencmode=prefer channel_binding=prefer sslnegotiation=postgres')

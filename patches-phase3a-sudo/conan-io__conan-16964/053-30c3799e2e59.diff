@@ -1,0 +1,98 @@
+diff --git a/conan/tools/cmake/cmakedeps2/cmakedeps.py b/conan/tools/cmake/cmakedeps2/cmakedeps.py
+index d6fd774b5f3..b92e8276ecb 100644
+--- a/conan/tools/cmake/cmakedeps2/cmakedeps.py
++++ b/conan/tools/cmake/cmakedeps2/cmakedeps.py
+@@ -95,6 +95,8 @@ def get_property(self, prop, dep, comp_name=None, check_type=None):
+                                      f'but "{type(value).__name__}" was found')
+             return value
+         except KeyError:
++            # Here we are not using the cpp_info = deduce_cpp_info(dep) because it is not
++            # necessary for the properties
+             return dep.cpp_info.get_property(prop, check_type=check_type) if not comp_name \
+                 else dep.cpp_info.components[comp_name].get_property(prop, check_type=check_type)
+ 
+@@ -160,6 +162,8 @@ def generate(self):
+             # https://cmake.org/cmake/help/v3.22/guide/using-dependencies/index.html
+             if cmake_find_mode == FIND_MODE_NONE:
+                 try:
++                    # This is irrespective of the components, it should be in the root cpp_info
++                    # To define the location of the pkg-config.cmake file
+                     build_dir = dep.cpp_info.builddirs[0]
+                 except IndexError:
+                     build_dir = dep.package_folder
+@@ -167,7 +171,6 @@ def generate(self):
+                 if pkg_folder:
+                     config_file = ConfigTemplate2(self._cmakedeps, dep).filename
+                     if os.path.isfile(os.path.join(pkg_folder, config_file)):
+-
+                         pkg_paths[pkg_name] = pkg_folder
+                 continue
+ 
+@@ -197,8 +200,8 @@ def _get_host_runtime_dirs(self):
+         is_win = self._conanfile.settings.get_safe("os") == "Windows"
+         for req in self._conanfile.dependencies.host.values():
+             config = req.settings.get_safe("build_type", self._cmakedeps.configuration)
+-            cppinfo = req.cpp_info.aggregated_components()
+-            runtime_dirs = cppinfo.bindirs if is_win else cppinfo.libdirs
++            aggregated_cppinfo = req.cpp_info.aggregated_components()
++            runtime_dirs = aggregated_cppinfo.bindirs if is_win else aggregated_cppinfo.libdirs
+             for d in runtime_dirs:
+                 d = d.replace("\\", "/")
+                 existing = host_runtime_dirs.setdefault(config, [])
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+index 93b626b487b..c4604a7b2c2 100644
+--- a/conan/tools/cmake/cmakedeps2/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -55,6 +55,8 @@ def _requires(self, info, components):
+                 except KeyError:  # The transitive dep might have been skipped
+                     pass
+                 else:
++                    # To check if the component exist, it is ok to use the standard cpp_info
++                    # No need to use the cpp_info = deduce_cpp_info(dep)
+                     dep_comp = dep.cpp_info.components.get(required_comp)
+                     if dep_comp is None:
+                         # It must be the interface pkgname::pkgname target
+@@ -92,9 +94,9 @@ def _context(self):
+         prefixes = [f] + prefixes
+         include_dirs = definitions = libraries = None
+         if not self._require.build:  # To add global variables for try_compile and legacy
+-            cppinfo = self._conanfile.cpp_info.aggregated_components()
++            aggregated_cppinfo = cpp_info.aggregated_components()
+             # FIXME: Proper escaping of paths for CMake and relativization
+-            include_dirs = ";".join(i.replace("\\", "/") for i in cppinfo.includedirs)
++            include_dirs = ";".join(i.replace("\\", "/") for i in aggregated_cppinfo.includedirs)
+             definitions = ""
+             root_target_name = self._cmakedeps.get_property("cmake_target_name", self._conanfile)
+             libraries = root_target_name or f"{pkg_name}::{pkg_name}"
+diff --git a/conans/model/build_info.py b/conans/model/build_info.py
+index ffd0377b309..4b4ef9f334b 100644
+--- a/conans/model/build_info.py
++++ b/conans/model/build_info.py
+@@ -136,6 +136,7 @@ def deserialize(contents):
+         return result
+ 
+     def clone(self):
++        # Necessary below for exploding a cpp_info.libs = [lib1, lib2] into components
+         result = _Component()
+         for k, v in vars(self).items():
+             if k.startswith("_"):
+diff --git a/test/integration/toolchains/cmake/test_cmaketoolchain.py b/test/integration/toolchains/cmake/test_cmaketoolchain.py
+index 8b954fff7d2..7af778df487 100644
+--- a/test/integration/toolchains/cmake/test_cmaketoolchain.py
++++ b/test/integration/toolchains/cmake/test_cmaketoolchain.py
+@@ -392,7 +392,6 @@ def test_runtime_lib_dirs_single_conf(lib_dir_setup):
+ 
+     client.run(f'install . -s build_type=Release {generator}')
+     contents = client.load("conan_toolchain.cmake")
+-    print(contents)
+     pattern_lib_path = r'list\(PREPEND CMAKE_LIBRARY_PATH (.*)\)'
+     pattern_lib_dirs = r'set\(CONAN_RUNTIME_LIB_DIRS (.*) \)'
+ 
+@@ -416,7 +415,6 @@ def test_runtime_lib_dirs_multiconf(lib_dir_setup):
+     client.run(f'install . -s build_type=Debug {generator}')
+ 
+     contents = client.load("conan_toolchain.cmake")
+-    print(contents)
+     pattern_lib_dirs = r"set\(CONAN_RUNTIME_LIB_DIRS ([^)]*)\)"
+     runtime_lib_dirs = re.search(pattern_lib_dirs, contents).group(1)
+ 

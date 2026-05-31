@@ -1,0 +1,135 @@
+diff --git a/tests/isolated/fork_in_main_thread.py b/tests/isolated/fork_in_main_thread.py
+new file mode 100644
+index 000000000..fb0f14d52
+--- /dev/null
++++ b/tests/isolated/fork_in_main_thread.py
+@@ -0,0 +1,42 @@
++import eventlet
++eventlet.monkey_patch()
++
++import os
++import time
++import threading
++
++results = []
++parent = True
++
++def check_current():
++    if threading.current_thread() not in threading.enumerate():
++        raise SystemExit(17)
++
++def background():
++    time.sleep(1)
++    check_current()
++    results.append(True)
++
++def forker():
++    pid = os.fork()
++    check_current()
++    if pid != 0:
++        # We're in the parent. Wait for child to die.
++        wait_pid, status = os.wait()
++        exit_code = os.waitstatus_to_exitcode(status)
++        assert wait_pid == pid
++        assert exit_code == 0, exit_code
++    else:
++        global parent
++        parent = False
++    results.append(True)
++
++t = threading.Thread(target=background)
++t.start()
++forker()
++t.join()
++
++check_current()
++assert results == [True, True]
++if parent:
++    print("pass")
+diff --git a/tests/isolated/fork_in_thread.py b/tests/isolated/fork_in_thread.py
+new file mode 100644
+index 000000000..29fff56a2
+--- /dev/null
++++ b/tests/isolated/fork_in_thread.py
+@@ -0,0 +1,43 @@
++import eventlet
++eventlet.monkey_patch()
++
++import os
++import time
++import threading
++
++results = []
++parent = True
++
++def check_current():
++    if threading.current_thread() not in threading.enumerate():
++        raise SystemExit(17)
++
++def background():
++    time.sleep(1)
++    check_current()
++    results.append(True)
++
++def forker():
++    pid = os.fork()
++    check_current()
++    if pid != 0:
++        # We're in the parent. Wait for child to die.
++        wait_pid, status = os.wait()
++        exit_code = os.waitstatus_to_exitcode(status)
++        assert wait_pid == pid
++        assert exit_code == 0, exit_code
++    else:
++        global parent
++        parent = False
++
++t = threading.Thread(target=background)
++t.start()
++t2 = threading.Thread(target=forker)
++t2.start()
++t2.join()
++t.join()
++
++check_current()
++assert results == [True]
++if parent:
++    print("pass")
+diff --git a/tests/patcher_test.py b/tests/patcher_test.py
+index 867a75361..2197a7572 100644
+--- a/tests/patcher_test.py
++++ b/tests/patcher_test.py
+@@ -514,14 +514,32 @@ def test_threadpoolexecutor():
+     tests.run_isolated('patcher_threadpoolexecutor.py')
+ 
+ 
++FORK_REASON = "fork() doesn't work well on macOS, and definitely doesn't work on Windows"
++
+ @pytest.mark.skipif(
+     not sys.platform.startswith("linux"),
+-    reason="fork() doesn't work well on macOS, and definitely doesn't work on Windows"
++    reason=FORK_REASON
+ )
+ def test_fork_after_monkey_patch():
+     tests.run_isolated('patcher_fork_after_monkey_patch.py')
+ 
+ 
++@pytest.mark.skipif(
++    not sys.platform.startswith("linux"),
++    reason=FORK_REASON
++)
++def test_fork_after_monkey_patch_threading():
++    tests.run_isolated('fork_in_main_thread.py')
++
++
++@pytest.mark.skipif(
++    not sys.platform.startswith("linux"),
++    reason=FORK_REASON
++)
++def test_fork_in_thread_after_monkey_patch_threading():
++    tests.run_isolated('fork_in_thread.py')
++
++
+ def test_builtin():
+     tests.run_isolated('patcher_builtin.py')
+ 

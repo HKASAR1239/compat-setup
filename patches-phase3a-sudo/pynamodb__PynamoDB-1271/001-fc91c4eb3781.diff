@@ -1,0 +1,248 @@
+diff --git a/docs/release_notes.rst b/docs/release_notes.rst
+index 864b59e4..a39f24b8 100644
+--- a/docs/release_notes.rst
++++ b/docs/release_notes.rst
+@@ -3,6 +3,20 @@
+ Release Notes
+ =============
+ 
++v6.1.0
++------
++
++Features:
++
++* Add the ability to set or unset the boto retry configuration (:pr:`1271`)
++
++    * This adds the ability to directly set the boto retry configuration dictionary, or
++      to leave it unset and allow botocore to automatically discover the configuration
++      from the environment or `~/.aws/config` files.
++    * A new setting `retry_configuration` was added to configure this behavior.
++    * The default behavior of PynamoDB in regards to configuring retries remains the
++      same as before.
++
+ v6.0.2
+ ------
+ 
+diff --git a/docs/settings.rst b/docs/settings.rst
+index 4d3a7861..6cbd0b72 100644
+--- a/docs/settings.rst
++++ b/docs/settings.rst
+@@ -69,6 +69,21 @@ Default: automatically constructed by boto to account for region
+ The URL endpoint for DynamoDB. This can be used to use a local implementation of DynamoDB such as DynamoDB Local or dynalite.
+ 
+ 
++retry_configuration
++-------------------
++
++Default: ``"LEGACY"``
++
++This controls the PynamoDB retry behavior. The default of ``"LEGACY"`` keeps the
++existing PynamoDB retry behavior. If set to ``None``, this will use botocore's default
++retry configuration discovery mechanism as documented
++`in boto3 <https://boto3.amazonaws.com/v1/documentation/api/latest/guide/retries.html#retries>`_
++and
++`in the AWS SDK docs <https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html>`_.
++If set to a retry configuration dictionary as described
++`here <https://boto3.amazonaws.com/v1/documentation/api/latest/guide/retries.html#defining-a-retry-configuration-in-a-config-object-for-your-boto3-client>`_
++it will be used directly in the botocore client configuration.
++
+ Overriding settings
+ ~~~~~~~~~~~~~~~~~~~
+ 
+diff --git a/pynamodb/connection/base.py b/pynamodb/connection/base.py
+index 0b70cc1f..301ee171 100644
+--- a/pynamodb/connection/base.py
++++ b/pynamodb/connection/base.py
+@@ -1,11 +1,17 @@
+ """
+ Lowest level connection
+ """
++import sys
+ import logging
+ import uuid
+ from threading import local
+-from typing import Any, Dict, List, Mapping, Optional, Sequence, cast
++from typing import Any, Dict, List, Mapping, Optional, Sequence, Union, cast
++if sys.version_info >= (3, 8):
++    from typing import Literal
++else:
++    from typing_extensions import Literal
+ 
++import botocore.config
+ import botocore.client
+ import botocore.exceptions
+ from botocore.client import ClientError
+@@ -247,6 +253,13 @@ def __init__(self,
+                  read_timeout_seconds: Optional[float] = None,
+                  connect_timeout_seconds: Optional[float] = None,
+                  max_retry_attempts: Optional[int] = None,
++                 retry_configuration: Optional[
++                     Union[
++                         Literal["LEGACY"],
++                         Literal["UNSET"],
++                         "botocore.config._RetryDict",
++                     ]
++                 ] = None,
+                  max_pool_connections: Optional[int] = None,
+                  extra_headers: Optional[Mapping[str, str]] = None,
+                  aws_access_key_id: Optional[str] = None,
+@@ -277,6 +290,18 @@ def __init__(self,
+         else:
+             self._max_retry_attempts_exception = get_settings_value('max_retry_attempts')
+ 
++        # Since we have the pattern of using `None` to indicate "read from the
++        # settings", we use a literal of "UNSET" to indicate we want the
++        # `_retry_configuration` attribute set to `None` so botocore will use its own
++        # retry configuration discovery logic. This was required so direct users of the
++        # `Connection` class can still leave the retry configuration unset.
++        if retry_configuration == "UNSET":
++            self._retry_configuration = None
++        elif retry_configuration is not None:
++            self._retry_configuration = retry_configuration
++        else:
++            self._retry_configuration = get_settings_value('retry_configuration')
++
+         if max_pool_connections is not None:
+             self._max_pool_connections = max_pool_connections
+         else:
+@@ -399,15 +424,22 @@ def client(self) -> BotocoreBaseClientPrivate:
+         # if the client does not have credentials, we create a new client
+         # otherwise the client is permanently poisoned in the case of metadata service flakiness when using IAM roles
+         if not self._client or (self._client._request_signer and not self._client._request_signer._credentials):
++            # Check if we are using the "LEGACY" retry mode to keep previous PynamoDB
++            # retry behavior, or if we are using the new retry configuration settings.
++            if self._retry_configuration != "LEGACY":
++                retries = self._retry_configuration
++            else:
++                retries = {
++                    'total_max_attempts': 1 + self._max_retry_attempts_exception,
++                    'mode': 'standard',
++                }
++
+             config = botocore.client.Config(
+                 parameter_validation=False,  # Disable unnecessary validation for performance
+                 connect_timeout=self._connect_timeout_seconds,
+                 read_timeout=self._read_timeout_seconds,
+                 max_pool_connections=self._max_pool_connections,
+-                retries={
+-                    'total_max_attempts': 1 + self._max_retry_attempts_exception,
+-                    'mode': 'standard',
+-                }
++                retries=retries,
+             )
+             self._client = cast(BotocoreBaseClientPrivate, self.session.create_client(SERVICE_NAME, self.region, endpoint_url=self.host, config=config))
+ 
+diff --git a/pynamodb/settings.py b/pynamodb/settings.py
+index 330ca7a3..503f060d 100644
+--- a/pynamodb/settings.py
++++ b/pynamodb/settings.py
+@@ -15,6 +15,7 @@
+     'region': None,
+     'max_pool_connections': 10,
+     'extra_headers': None,
++    'retry_configuration': 'LEGACY'
+ }
+ 
+ OVERRIDE_SETTINGS_PATH = getenv('PYNAMODB_CONFIG', '/etc/pynamodb/global_default_settings.py')
+diff --git a/tests/test_base_connection.py b/tests/test_base_connection.py
+index 4728c8ef..c90acd27 100644
+--- a/tests/test_base_connection.py
++++ b/tests/test_base_connection.py
+@@ -1632,3 +1632,69 @@ def test_connection_update_time_to_live__fail():
+         req.side_effect = BotoCoreError
+         with pytest.raises(TableError):
+             conn.update_time_to_live('test table', 'my_ttl')
++
++@pytest.mark.parametrize(
++    "retry_configuration, expected_retries",
++    (
++        (None, None),
++        (
++            "LEGACY",
++            {
++                'total_max_attempts': 4,
++                'mode': 'standard',
++            },
++        ),
++        (
++            {"max_attempts": 10, "mode": "adaptive"},
++            {"max_attempts": 10, "mode": "adaptive"},
++        )
++    )
++)
++def test_connection_client_retry_configuration(
++    retry_configuration, expected_retries, mocker
++):
++    """Test that the client respects the retry configuration setting."""
++    mock_client_config = mocker.patch(target="botocore.client.Config", autospec=True)
++    mock_session_property = mocker.patch.object(
++        target=Connection, attribute="session", autospec=True
++    )
++
++    unit_under_test = Connection()
++    unit_under_test._retry_configuration = retry_configuration
++    unit_under_test.client
++
++    # Ensure the configuration was called correctly, and used the appropriate retry
++    # configuration.
++    mock_client_config.assert_called_once_with(
++        parameter_validation=False,
++        connect_timeout=unit_under_test._connect_timeout_seconds,
++        read_timeout=unit_under_test._read_timeout_seconds,
++        max_pool_connections=unit_under_test._max_pool_connections,
++        retries=expected_retries
++    )
++    # Ensure the session was created correctly.
++    mock_session_property.create_client.assert_called_once_with(
++        "dynamodb",
++        unit_under_test.region,
++        endpoint_url=unit_under_test.host,
++        config=mock_client_config.return_value,
++    )
++
++@pytest.mark.parametrize(
++    "retry_configuration, expected_retry_configuration",
++    (
++        (None, "LEGACY"),
++        ("LEGACY","LEGACY"),
++        ("UNSET", None),
++        (
++            {"max_attempts": 10, "mode": "adaptive"},
++            {"max_attempts": 10, "mode": "adaptive"},
++        )
++    )
++)
++def test_connection_client_retry_configuration__init__(
++    retry_configuration, expected_retry_configuration
++):
++    """Test that the __init__ properly sets the `_retry_configuration` attribute."""
++    unit_under_test = Connection(retry_configuration=retry_configuration)
++    assert unit_under_test._retry_configuration == expected_retry_configuration
+diff --git a/tests/test_settings.py b/tests/test_settings.py
+index 829c1688..88b3a598 100644
+--- a/tests/test_settings.py
++++ b/tests/test_settings.py
+@@ -1,4 +1,3 @@
+-import sys
+ from unittest.mock import patch
+ 
+ import pytest
+@@ -20,3 +19,18 @@ def test_override_old_attributes(settings_str, tmpdir):
+             reload(pynamodb.settings)
+     assert len(warns) == 1
+     assert 'options are no longer supported' in str(warns[0].message)
++
++
++def test_default_settings():
++    """Ensure that the default settings are what we expect. This is mainly done to catch
++    any potentially breaking changes to default settings.
++    """
++    assert pynamodb.settings.default_settings_dict == {
++        'connect_timeout_seconds': 15,
++        'read_timeout_seconds': 30,
++        'max_retry_attempts': 3,
++        'region': None,
++        'max_pool_connections': 10,
++        'extra_headers': None,
++        'retry_configuration': 'LEGACY'
++    }

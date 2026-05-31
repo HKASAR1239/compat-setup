@@ -1,0 +1,19 @@
+diff --git a/conans/model/build_info.py b/conans/model/build_info.py
+index e966962835d..951981c0148 100644
+--- a/conans/model/build_info.py
++++ b/conans/model/build_info.py
+@@ -121,13 +121,10 @@ def serialize(self):
+             "sysroot": self._sysroot,
+             "requires": self._requires,
+             "properties": self._properties,
+-<<<<<<< HEAD
+-            "exe": self.exe,
+-=======
++            "exe": self.exe,  # single exe, incompatible with libs
+             "type": self._type,
+             "location": self._location,
+             "link_location": self._link_location
+->>>>>>> develop2
+         }
+ 
+     @staticmethod

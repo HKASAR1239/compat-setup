@@ -1,0 +1,16 @@
+diff --git a/docs/plugins/lastgenre.rst b/docs/plugins/lastgenre.rst
+index 48a8686fe8..9c3250656e 100644
+--- a/docs/plugins/lastgenre.rst
++++ b/docs/plugins/lastgenre.rst
+@@ -153,8 +153,9 @@ make sure any existing genres remain, set ``whitelist: no``).
+     force: yes
+     keep_existing: yes
+ 
+-If ``force`` is disabled the ``keep_existing`` option is simply ignored (since ``force:
+-no`` means `not touching` existing tags anyway).
++.. attention::
++    If ``force`` is disabled the ``keep_existing`` option is simply ignored (since ``force:
++    no`` means `not touching` existing tags anyway).
+ 
+ 
+ 

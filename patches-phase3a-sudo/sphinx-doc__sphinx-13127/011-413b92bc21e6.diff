@@ -1,0 +1,14 @@
+diff --git a/sphinx/util/requests.py b/sphinx/util/requests.py
+index 7dc31f0af13..f713eeaddb5 100644
+--- a/sphinx/util/requests.py
++++ b/sphinx/util/requests.py
+@@ -66,8 +66,7 @@ def get_redirect_target(self, resp: requests.Response) -> str | None:
+         """Overrides the default requests.Session.get_redirect_target"""
+         # do not follow redirections that match ignored URI patterns
+         if resp.is_redirect:
+-            location = resp.headers['location']
+-            destination = urljoin(resp.url, location)
++            destination = urljoin(resp.url, resp.headers['location'])
+             if any(pat.match(destination) for pat in self._ignored_redirects):
+                 raise _IgnoredRedirection(
+                     destination=destination,

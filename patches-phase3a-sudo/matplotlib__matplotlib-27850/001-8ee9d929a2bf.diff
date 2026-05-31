@@ -1,0 +1,137 @@
+diff --git a/doc/api/next_api_changes/deprecations/27850-REC.rst b/doc/api/next_api_changes/deprecations/27850-REC.rst
+new file mode 100644
+index 000000000000..2021c2737ecd
+--- /dev/null
++++ b/doc/api/next_api_changes/deprecations/27850-REC.rst
+@@ -0,0 +1,10 @@
++``plot_date``
++~~~~~~~~~~~~~
++
++Use of `~.Axes.plot_date` has been discouraged since Matplotlib 3.5 and the
++function is now formally deprecated.
++
++- ``datetime``-like data should directly be plotted using `~.Axes.plot`.
++-  If you need to plot plain numeric data as :ref:`date-format` or need to set
++   a timezone, call ``ax.xaxis.axis_date`` / ``ax.yaxis.axis_date`` before
++   `~.Axes.plot`. See `.Axis.axis_date`.
+diff --git a/lib/matplotlib/axes/_axes.py b/lib/matplotlib/axes/_axes.py
+index 60921f69fc1b..3a1cc2fb9fb6 100644
+--- a/lib/matplotlib/axes/_axes.py
++++ b/lib/matplotlib/axes/_axes.py
+@@ -1742,17 +1742,17 @@ def plot(self, *args, scalex=True, scaley=True, data=None, **kwargs):
+             self._request_autoscale_view("y")
+         return lines
+ 
++    @_api.deprecated("3.9", alternative="plot")
+     @_preprocess_data(replace_names=["x", "y"], label_namer="y")
+     @_docstring.dedent_interpd
+     def plot_date(self, x, y, fmt='o', tz=None, xdate=True, ydate=False,
+                   **kwargs):
+         """
+-        [*Discouraged*] Plot coercing the axis to treat floats as dates.
++        Plot coercing the axis to treat floats as dates.
+ 
+-        .. admonition:: Discouraged
++        .. deprecated:: 3.9
+ 
+-            This method exists for historic reasons and will be deprecated in
+-            the future.
++            This method exists for historic reasons and will be removed in version 3.11.
+ 
+             - ``datetime``-like data should directly be plotted using
+               `~.Axes.plot`.
+diff --git a/lib/matplotlib/tests/test_axes.py b/lib/matplotlib/tests/test_axes.py
+index 8c43b04e0eb7..fbcafa76dcea 100644
+--- a/lib/matplotlib/tests/test_axes.py
++++ b/lib/matplotlib/tests/test_axes.py
+@@ -870,7 +870,8 @@ def test_single_date():
+     data1 = [-65.54]
+ 
+     fig, ax = plt.subplots(2, 1)
+-    ax[0].plot_date(time1 + dt, data1, 'o', color='r')
++    with pytest.warns(mpl.MatplotlibDeprecationWarning):
++        ax[0].plot_date(time1 + dt, data1, 'o', color='r')
+     ax[1].plot(time1, data1, 'o', color='r')
+ 
+ 
+@@ -6897,11 +6898,13 @@ def test_date_timezone_x():
+     # Same Timezone
+     plt.figure(figsize=(20, 12))
+     plt.subplot(2, 1, 1)
+-    plt.plot_date(time_index, [3] * 3, tz='Canada/Eastern')
++    with pytest.warns(mpl.MatplotlibDeprecationWarning):
++        plt.plot_date(time_index, [3] * 3, tz='Canada/Eastern')
+ 
+     # Different Timezone
+     plt.subplot(2, 1, 2)
+-    plt.plot_date(time_index, [3] * 3, tz='UTC')
++    with pytest.warns(mpl.MatplotlibDeprecationWarning):
++        plt.plot_date(time_index, [3] * 3, tz='UTC')
+ 
+ 
+ @image_comparison(['date_timezone_y.png'])
+@@ -6914,12 +6917,13 @@ def test_date_timezone_y():
+     # Same Timezone
+     plt.figure(figsize=(20, 12))
+     plt.subplot(2, 1, 1)
+-    plt.plot_date([3] * 3,
+-                  time_index, tz='Canada/Eastern', xdate=False, ydate=True)
++    with pytest.warns(mpl.MatplotlibDeprecationWarning):
++        plt.plot_date([3] * 3, time_index, tz='Canada/Eastern', xdate=False, ydate=True)
+ 
+     # Different Timezone
+     plt.subplot(2, 1, 2)
+-    plt.plot_date([3] * 3, time_index, tz='UTC', xdate=False, ydate=True)
++    with pytest.warns(mpl.MatplotlibDeprecationWarning):
++        plt.plot_date([3] * 3, time_index, tz='UTC', xdate=False, ydate=True)
+ 
+ 
+ @image_comparison(['date_timezone_x_and_y.png'], tol=1.0)
+@@ -6932,11 +6936,13 @@ def test_date_timezone_x_and_y():
+     # Same Timezone
+     plt.figure(figsize=(20, 12))
+     plt.subplot(2, 1, 1)
+-    plt.plot_date(time_index, time_index, tz='UTC', ydate=True)
++    with pytest.warns(mpl.MatplotlibDeprecationWarning):
++        plt.plot_date(time_index, time_index, tz='UTC', ydate=True)
+ 
+     # Different Timezone
+     plt.subplot(2, 1, 2)
+-    plt.plot_date(time_index, time_index, tz='US/Eastern', ydate=True)
++    with pytest.warns(mpl.MatplotlibDeprecationWarning):
++        plt.plot_date(time_index, time_index, tz='US/Eastern', ydate=True)
+ 
+ 
+ @image_comparison(['axisbelow.png'], remove_text=True)
+diff --git a/lib/matplotlib/tests/test_datetime.py b/lib/matplotlib/tests/test_datetime.py
+index 104a649e1464..4b693eb7d1ca 100644
+--- a/lib/matplotlib/tests/test_datetime.py
++++ b/lib/matplotlib/tests/test_datetime.py
+@@ -657,9 +657,10 @@ def test_plot_date(self):
+         x_ranges = np.array(range(1, range_threshold))
+         y_ranges = np.array(range(1, range_threshold))
+ 
+-        ax1.plot_date(x_dates, y_dates)
+-        ax2.plot_date(x_dates, y_ranges)
+-        ax3.plot_date(x_ranges, y_dates)
++        with pytest.warns(mpl.MatplotlibDeprecationWarning):
++            ax1.plot_date(x_dates, y_dates)
++            ax2.plot_date(x_dates, y_ranges)
++            ax3.plot_date(x_ranges, y_dates)
+ 
+     @pytest.mark.xfail(reason="Test for quiver not written yet")
+     @mpl.style.context("default")
+diff --git a/lib/mpl_toolkits/axes_grid1/tests/test_axes_grid1.py b/lib/mpl_toolkits/axes_grid1/tests/test_axes_grid1.py
+index 328bb6e33fdf..b1a18d77747e 100644
+--- a/lib/mpl_toolkits/axes_grid1/tests/test_axes_grid1.py
++++ b/lib/mpl_toolkits/axes_grid1/tests/test_axes_grid1.py
+@@ -93,7 +93,8 @@ def test_twin_axes_empty_and_removed():
+ 
+ def test_twin_axes_both_with_units():
+     host = host_subplot(111)
+-    host.plot_date([0, 1, 2], [0, 1, 2], xdate=False, ydate=True)
++    with pytest.warns(mpl.MatplotlibDeprecationWarning):
++        host.plot_date([0, 1, 2], [0, 1, 2], xdate=False, ydate=True)
+     twin = host.twinx()
+     twin.plot(["a", "b", "c"])
+     assert host.get_yticklabels()[0].get_text() == "00:00:00"

@@ -1,0 +1,15 @@
+diff --git a/docs/sphinx/source/whatsnew/v0.10.4.rst b/docs/sphinx/source/whatsnew/v0.10.4.rst
+index e7e0bdfbaf..df73d68e98 100644
+--- a/docs/sphinx/source/whatsnew/v0.10.4.rst
++++ b/docs/sphinx/source/whatsnew/v0.10.4.rst
+@@ -11,8 +11,8 @@ Enhancements
+ 
+ Bug fixes
+ ~~~~~~~~~
+-* Removed `or` clause from `if` statement in `infer_temperature_model` in
+-`ModelChain` (:issue:`1759`).
++* :py:class:`~pvlib.modelchain.ModelChain` now raises a more useful error when
++  ``temperature_model_parameters`` are specified on the passed ``system`` instead of on its ``arrays``. (:issue:`1759`).
+ 
+ Testing
+ ~~~~~~~

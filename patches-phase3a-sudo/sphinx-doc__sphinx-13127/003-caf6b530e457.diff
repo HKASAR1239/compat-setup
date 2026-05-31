@@ -1,0 +1,13 @@
+diff --git a/CHANGES.rst b/CHANGES.rst
+index b47f417e9a1..b2406e8095b 100644
+--- a/CHANGES.rst
++++ b/CHANGES.rst
+@@ -20,6 +20,8 @@ Bugs fixed
+ 
+ * #13060: HTML Search: use ``Map`` to store per-file term scores.
+   Patch by James Addison
++* #11233: linkcheck: match redirect URIs against :confval:`linkcheck_ignore` by
++  overriding session-level ``requests.get_redirect_target``.
+ 
+ Testing
+ -------

@@ -1,0 +1,217 @@
+diff --git a/conan/tools/cmake/cmakedeps2/target_configuration.py b/conan/tools/cmake/cmakedeps2/target_configuration.py
+index 26de9fe9d83..93b626b487b 100644
+--- a/conan/tools/cmake/cmakedeps2/target_configuration.py
++++ b/conan/tools/cmake/cmakedeps2/target_configuration.py
+@@ -173,6 +173,9 @@ def _get_cmake_lib(self, info, components, pkg_folder, pkg_folder_var):
+             target["type"] = lib_type
+             target["location"] = location
+             target["link_location"] = link_location
++            link_languages = info.languages or self._conanfile.languages or []
++            link_languages = ["CXX" if c == "C++" else c for c in link_languages]
++            target["link_languages"] = link_languages
+ 
+         return target
+ 
+@@ -307,6 +310,17 @@ def _template(self):
+                      "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:{{exeflags}}>")
+         {% endif %}
+ 
++        {% if lib_info.get("link_languages") %}
++        get_property(_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
++        {% for lang in lib_info["link_languages"] %}
++        if(NOT "{{lang}}" IN_LIST _languages)
++            message(SEND_ERROR
++                    "Target {{lib}} has {{lang}} linkage but {{lang}} not enabled in project()")
++        endif()
++        set_property(TARGET {{lib}} APPEND PROPERTY
++                     IMPORTED_LINK_INTERFACE_LANGUAGES_{{config}} {{lang}})
++        {% endfor %}
++        {% endif %}
+         {% if lib_info.get("location") %}
+         set_property(TARGET {{lib}} APPEND PROPERTY IMPORTED_CONFIGURATIONS {{config}})
+         set_target_properties({{lib}} PROPERTIES IMPORTED_LOCATION_{{config}}
+diff --git a/conans/model/build_info.py b/conans/model/build_info.py
+index 6269d1cb58a..ffd0377b309 100644
+--- a/conans/model/build_info.py
++++ b/conans/model/build_info.py
+@@ -80,6 +80,7 @@ def __init__(self, set_defaults=False):
+         self._exelinkflags = None  # linker flags
+         self._objects = None  # linker flags
+         self._exe = None  # application executable, only 1 allowed, following CPS
++        self._languages = None
+ 
+         self._sysroot = None
+         self._requires = None
+@@ -123,7 +124,8 @@ def serialize(self):
+             "exe": self._exe,  # single exe, incompatible with libs
+             "type": self._type,
+             "location": self._location,
+-            "link_location": self._link_location
++            "link_location": self._link_location,
++            "languages": self._languages
+         }
+ 
+     @staticmethod
+@@ -299,6 +301,14 @@ def link_location(self):
+     def link_location(self, value):
+         self._link_location = value
+ 
++    @property
++    def languages(self):
++        return self._languages
++
++    @languages.setter
++    def languages(self, value):
++        self._languages = value
++
+     @property
+     def defines(self):
+         if self._defines is None:
+diff --git a/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new_cpp_linkage.py b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new_cpp_linkage.py
+new file mode 100644
+index 00000000000..0932a77fa35
+--- /dev/null
++++ b/test/functional/toolchains/cmake/cmakedeps/test_cmakedeps_new_cpp_linkage.py
+@@ -0,0 +1,54 @@
++import platform
++import textwrap
++import pytest
++
++
++new_value = "will_break_next"
++
++
++@pytest.mark.skipif(platform.system() == "Windows", reason="Windows doesn't fail to link")
++def test_auto_cppstd(matrix_c_interface_client):
++    c = matrix_c_interface_client
++    # IMPORTANT: This must be a C and CXX CMake project!!
++    consumer = textwrap.dedent("""
++        cmake_minimum_required(VERSION 3.15)
++        project(myapp C CXX)
++
++        find_package(matrix REQUIRED)
++
++        add_executable(app app.c)
++        target_link_libraries(app PRIVATE matrix::matrix)
++        """)
++
++    conanfile = textwrap.dedent("""\
++        import os
++        from conan import ConanFile
++        from conan.tools.cmake import CMake, cmake_layout
++
++        class Recipe(ConanFile):
++            settings = "os", "compiler", "build_type", "arch"
++            package_type = "application"
++            generators = "CMakeToolchain", "CMakeDeps"
++            requires = "matrix/0.1"
++
++            def layout(self):
++                cmake_layout(self)
++
++            def build(self):
++                cmake = CMake(self)
++                cmake.configure()
++                cmake.build()
++                self.run(os.path.join(self.cpp.build.bindir, "app"), env="conanrun")
++        """)
++    app = textwrap.dedent("""
++        #include "matrix.h"
++        int main(){
++            matrix();
++            return 0;
++        }
++        """)
++    c.save({"conanfile.py": conanfile,
++            "CMakeLists.txt": consumer,
++            "app.c": app}, clean_first=True)
++    c.run(f"build . -c tools.cmake.cmakedeps:new={new_value}")
++    assert "Hello Matrix!" in c.out
+diff --git a/test/functional/toolchains/conftest.py b/test/functional/toolchains/conftest.py
+index 365a151bbf1..b81671e870f 100644
+--- a/test/functional/toolchains/conftest.py
++++ b/test/functional/toolchains/conftest.py
+@@ -155,3 +155,83 @@ def matrix_client_components(_matrix_client_components):
+     c.cache_folder = os.path.join(temp_folder(), ".conan2")
+     shutil.copytree(_matrix_client_components.cache_folder, c.cache_folder)
+     return c
++
++
++@pytest.fixture(scope="session")
++def _matrix_c_interface_client():
++    c = TestClient()
++    matrix_h = textwrap.dedent("""\
++        #pragma once
++        #ifdef __cplusplus
++        extern "C" {
++        #endif
++            void matrix();
++        #ifdef __cplusplus
++        }
++        #endif
++        """)
++    matrix_cpp = textwrap.dedent("""\
++        #include "matrix.h"
++        #include <iostream>
++        #include <string>
++        void matrix(){
++            std::cout<< std::string("Hello Matrix!") <<std::endl;
++        }
++        """)
++    # Having here the config.cmake code to be able to manually check what CMake generates
++    cmake = textwrap.dedent("""\
++        cmake_minimum_required(VERSION 3.15)
++        project(matrix C CXX)
++        add_library(matrix STATIC src/matrix.cpp)
++        target_include_directories(matrix PUBLIC
++          $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
++          $<INSTALL_INTERFACE:include>
++        )
++        set_target_properties(matrix PROPERTIES PUBLIC_HEADER "include/matrix.h")
++        install(TARGETS matrix EXPORT matrixConfig)
++        export(TARGETS matrix
++            NAMESPACE matrix::
++            FILE "${CMAKE_CURRENT_BINARY_DIR}/matrixConfig.cmake"
++        )
++        install(EXPORT matrixConfig
++            DESTINATION "${CMAKE_INSTALL_PREFIX}/matrix/cmake"
++            NAMESPACE matrix::
++        )
++        """)
++    conanfile = textwrap.dedent("""\
++        from conan import ConanFile
++        from conan.tools.cmake import CMake, cmake_layout
++        class Recipe(ConanFile):
++            name = "matrix"
++            version = "0.1"
++            settings = "os", "compiler", "build_type", "arch"
++            package_type = "static-library"
++            generators = "CMakeToolchain"
++            exports_sources = "CMakeLists.txt", "src/*", "include/*"
++            languages = "C++"
++            def build(self):
++                cmake = CMake(self)
++                cmake.configure()
++                cmake.build()
++            def layout(self):
++                cmake_layout(self)
++            def package(self):
++                cmake = CMake(self)
++                cmake.install()
++            def package_info(self):
++                self.cpp_info.libs = ["matrix"]
++        """)
++    c.save({"include/matrix.h": matrix_h,
++            "src/matrix.cpp": matrix_cpp,
++            "conanfile.py": conanfile,
++            "CMakeLists.txt": cmake})
++    c.run("create .")
++    return c
++
++
++@pytest.fixture()
++def matrix_c_interface_client(_matrix_c_interface_client):
++    c = TestClient()
++    c.cache_folder = os.path.join(temp_folder(), ".conan2")
++    shutil.copytree(_matrix_c_interface_client.cache_folder, c.cache_folder)
++    return c

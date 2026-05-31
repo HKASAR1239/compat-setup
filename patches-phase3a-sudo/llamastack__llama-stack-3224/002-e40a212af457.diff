@@ -1,0 +1,54 @@
+diff --git a/llama_stack/providers/inline/agents/meta_reference/responses/utils.py b/llama_stack/providers/inline/agents/meta_reference/responses/utils.py
+index 847cf02659..7aaeb4cd5a 100644
+--- a/llama_stack/providers/inline/agents/meta_reference/responses/utils.py
++++ b/llama_stack/providers/inline/agents/meta_reference/responses/utils.py
+@@ -157,8 +157,10 @@ async def convert_response_input_to_chat_messages(
+                         f"Llama Stack OpenAI Responses does not yet support message role '{input_item.role}' in this context"
+                     )
+                 messages.append(message_type(content=content))
+-        for result in tool_call_results.values():
+-            messages.append(result)
++        if len(tool_call_results):
++            raise ValueError(
++                f"Received function_call_output(s) with call_id(s) {tool_call_results.keys()}, but no corresponding function_call"
++            )
+     else:
+         messages.append(OpenAIUserMessageParam(content=input))
+     return messages
+diff --git a/tests/unit/providers/agents/meta_reference/test_response_conversion_utils.py b/tests/unit/providers/agents/meta_reference/test_response_conversion_utils.py
+index 985a0e2574..187540f82f 100644
+--- a/tests/unit/providers/agents/meta_reference/test_response_conversion_utils.py
++++ b/tests/unit/providers/agents/meta_reference/test_response_conversion_utils.py
+@@ -115,18 +115,27 @@ async def test_convert_string_input(self):
+ 
+     async def test_convert_function_tool_call_output(self):
+         input_items = [
++            OpenAIResponseOutputMessageFunctionToolCall(
++                call_id="call_123",
++                name="test_function",
++                arguments='{"param": "value"}',
++            ),
+             OpenAIResponseInputFunctionToolCallOutput(
+                 output="Tool output",
+                 call_id="call_123",
+-            )
++            ),
+         ]
+ 
+         result = await convert_response_input_to_chat_messages(input_items)
+ 
+-        assert len(result) == 1
+-        assert isinstance(result[0], OpenAIToolMessageParam)
+-        assert result[0].content == "Tool output"
+-        assert result[0].tool_call_id == "call_123"
++        assert len(result) == 2
++        assert isinstance(result[0], OpenAIAssistantMessageParam)
++        assert result[0].tool_calls[0].id == "call_123"
++        assert result[0].tool_calls[0].function.name == "test_function"
++        assert result[0].tool_calls[0].function.arguments == '{"param": "value"}'
++        assert isinstance(result[1], OpenAIToolMessageParam)
++        assert result[1].content == "Tool output"
++        assert result[1].tool_call_id == "call_123"
+ 
+     async def test_convert_function_tool_call(self):
+         input_items = [

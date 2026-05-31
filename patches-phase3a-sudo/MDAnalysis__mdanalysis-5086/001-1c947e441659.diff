@@ -1,0 +1,60 @@
+diff --git a/package/MDAnalysis/lib/formats/libdcd.pyx b/package/MDAnalysis/lib/formats/libdcd.pyx
+index 08ba4f120f4..3400fd4ae84 100644
+--- a/package/MDAnalysis/lib/formats/libdcd.pyx
++++ b/package/MDAnalysis/lib/formats/libdcd.pyx
+@@ -387,13 +387,13 @@ cdef class DCDFile:
+             raise EOFError('Trying to seek over max number of frames')
+         self.reached_eof = False
+ 
+-        cdef fio_size_t offset
++        cdef long long offset
+         if frame == 0:
+             offset = self._header_size
+         else:
+             offset = self._header_size
+             offset += self._firstframesize
+-            offset += self._framesize * (frame - 1)
++            offset += self._framesize * (<long long>frame - 1)
+ 
+         cdef int ok = fio_fseek(self.fp, offset, _whence_vals['FIO_SEEK_SET'])
+         if ok != 0:
+diff --git a/testsuite/MDAnalysisTests/formats/test_libdcd.py b/testsuite/MDAnalysisTests/formats/test_libdcd.py
+index 8f2dd310940..63a9d83622c 100644
+--- a/testsuite/MDAnalysisTests/formats/test_libdcd.py
++++ b/testsuite/MDAnalysisTests/formats/test_libdcd.py
+@@ -34,6 +34,7 @@
+     assert_almost_equal,
+ )
+ 
++import MDAnalysis as mda
+ from MDAnalysis.lib.formats.libdcd import (
+     DCDFile,
+     DCD_IS_CHARMM,
+@@ -41,6 +42,7 @@
+ )
+ 
+ from MDAnalysisTests.datafiles import (
++    PSF,
+     DCD,
+     DCD_NAMD_TRICLINIC,
+     legacy_DCD_ADK_coords,
+@@ -671,3 +673,19 @@ def test_write_random_unitcell(tmpdir):
+     with DCDFile(testname) as test:
+         for index, frame in enumerate(test):
+             assert_array_almost_equal(frame.unitcell, random_unitcells[index])
++
++
++@pytest.mark.skipif(
++    not os.environ.get("LARGEDCD", False), reason="Skipping large file test"
++)
++def test_gh_4879(tmpdir):
++    # NOTE: we really only need a trajectory with a frame
++    # count that is large enough to overflow a 32-bit signed
++    # integer in the DCD frame seeking arithmetic to reproduce
++    # the original issue
++    u = mda.Universe(PSF, 800 * [DCD])
++    with tmpdir.as_cwd():
++        f = "large.dcd"
++        u.atoms.write(f, frames="all")
++        u = mda.Universe(f)
++        u.trajectory[-2]

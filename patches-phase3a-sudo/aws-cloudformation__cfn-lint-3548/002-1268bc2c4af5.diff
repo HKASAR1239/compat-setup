@@ -1,0 +1,97 @@
+diff --git a/src/cfnlint/rules/resources/ectwo/InstanceImageId.py b/src/cfnlint/rules/resources/ectwo/InstanceImageId.py
+index 7219d3c10b..db809da416 100644
+--- a/src/cfnlint/rules/resources/ectwo/InstanceImageId.py
++++ b/src/cfnlint/rules/resources/ectwo/InstanceImageId.py
+@@ -70,11 +70,20 @@ def validate(
+             launch_templates = list(
+                 self._get_related_launch_template(instance_image_id_validator, instance)
+             )
++            path: deque[str | int] = deque([])
++            if "ImageId" != instance_image_id_validator.context.path.path[-1]:
++                path = deque(
++                    list(instance_image_id_validator.context.path.path)[
++                        len(validator.context.path.path) :
++                    ]
++                )
+ 
+             if not launch_templates:
+                 yield ValidationError(
+                     "'ImageId' is a required property",
+-                    path_override=instance_image_id_validator.context.path.path,
++                    validator="required",
++                    path=path,
++                    rule=self,
+                 )
+                 continue
+ 
+@@ -123,5 +132,7 @@ def validate(
+                     if launch_template_image_id is None and instance_image_id is None:
+                         yield ValidationError(
+                             "'ImageId' is a required property",
+-                            path_override=instance_image_id_validator.context.path.path,
++                            validator="required",
++                            path=path,
++                            rule=self,
+                         )
+diff --git a/test/unit/rules/resources/ec2/test_instance_image_id.py b/test/unit/rules/resources/ec2/test_instance_image_id.py
+index 845d5876ae..2db06f443e 100644
+--- a/test/unit/rules/resources/ec2/test_instance_image_id.py
++++ b/test/unit/rules/resources/ec2/test_instance_image_id.py
+@@ -184,9 +184,9 @@ def rule():
+             [
+                 ValidationError(
+                     "'ImageId' is a required property",
+-                    path_override=deque(
+-                        ["Resources", "Instance", "Properties", "ImageId"]
+-                    ),
++                    validator="required",
++                    rule=InstanceImageId(),
++                    path=deque([]),
+                 )
+             ],
+         ),
+@@ -221,9 +221,9 @@ def rule():
+             [
+                 ValidationError(
+                     "'ImageId' is a required property",
+-                    path_override=deque(
+-                        ["Resources", "Instance", "Properties", "ImageId"]
+-                    ),
++                    validator="required",
++                    rule=InstanceImageId(),
++                    path=deque([]),
+                 )
+             ],
+         ),
+@@ -268,17 +268,9 @@ def rule():
+             [
+                 ValidationError(
+                     "'ImageId' is a required property",
+-                    path_override=deque(
+-                        [
+-                            "Resources",
+-                            "Instance",
+-                            "Properties",
+-                            "ImageId",
+-                            "Fn::If",
+-                            2,
+-                            "Ref",
+-                        ]
+-                    ),
++                    validator="required",
++                    rule=InstanceImageId(),
++                    path=deque(["ImageId", "Fn::If", 2, "Ref"]),
+                 )
+             ],
+         ),
+@@ -288,6 +280,10 @@ def rule():
+ def test_validate(name, instance, expected, rule, validator):
+     errs = list(rule.validate(validator, "", instance, {}))
+ 
++    for err in errs:
++        print(err.path)
++        print(err.validator)
++        print(err.rule)
+     assert (
+         errs == expected
+     ), f"Expected test {name!r} to have {expected!r} but got {errs!r}"

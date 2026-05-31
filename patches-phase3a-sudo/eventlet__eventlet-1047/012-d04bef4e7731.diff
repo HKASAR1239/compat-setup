@@ -1,0 +1,86 @@
+diff --git a/tests/isolated/fork_in_main_thread.py b/tests/isolated/fork_in_main_thread.py
+index 1b823ff27..05f741567 100644
+--- a/tests/isolated/fork_in_main_thread.py
++++ b/tests/isolated/fork_in_main_thread.py
+@@ -1,4 +1,5 @@
+ import eventlet
++
+ eventlet.monkey_patch()
+ 
+ import os
+@@ -8,15 +9,18 @@
+ results = set()
+ parent = True
+ 
++
+ def check_current():
+     if threading.current_thread() not in threading.enumerate():
+         raise SystemExit(17)
+ 
++
+ def background():
+     time.sleep(1)
+     check_current()
+     results.add("background")
+ 
++
+ def forker():
+     pid = os.fork()
+     check_current()
+@@ -31,6 +35,7 @@ def forker():
+         parent = False
+     results.add("forker")
+ 
++
+ t = threading.Thread(target=background)
+ t.start()
+ forker()
+diff --git a/tests/isolated/fork_in_thread.py b/tests/isolated/fork_in_thread.py
+index 68aa0e75f..c78fa7547 100644
+--- a/tests/isolated/fork_in_thread.py
++++ b/tests/isolated/fork_in_thread.py
+@@ -1,4 +1,5 @@
+ import eventlet
++
+ eventlet.monkey_patch()
+ 
+ import os
+@@ -8,15 +9,18 @@
+ results = []
+ parent = True
+ 
++
+ def check_current():
+     if threading.current_thread() not in threading.enumerate():
+         raise SystemExit(17)
+ 
++
+ def background():
+     time.sleep(1)
+     check_current()
+     results.append(True)
+ 
++
+ def forker():
+     pid = os.fork()
+     check_current()
+@@ -31,6 +35,7 @@ def forker():
+         parent = False
+     results.append(True)
+ 
++
+ t = threading.Thread(target=background)
+ t.start()
+ t2 = threading.Thread(target=forker)
+diff --git a/tests/patcher_test.py b/tests/patcher_test.py
+index 2197a7572..1a988f47d 100644
+--- a/tests/patcher_test.py
++++ b/tests/patcher_test.py
+@@ -516,6 +516,7 @@ def test_threadpoolexecutor():
+ 
+ FORK_REASON = "fork() doesn't work well on macOS, and definitely doesn't work on Windows"
+ 
++
+ @pytest.mark.skipif(
+     not sys.platform.startswith("linux"),
+     reason=FORK_REASON

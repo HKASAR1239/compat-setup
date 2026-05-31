@@ -1,0 +1,55 @@
+diff --git a/src/mcp_atlassian/jira/config.py b/src/mcp_atlassian/jira/config.py
+index 3b1fd633f..323e89a07 100644
+--- a/src/mcp_atlassian/jira/config.py
++++ b/src/mcp_atlassian/jira/config.py
+@@ -45,7 +45,17 @@ def is_cloud(self) -> bool:
+             True if this is a cloud instance (atlassian.net), False otherwise.
+             Localhost URLs are always considered non-cloud (Server/Data Center).
+         """
+-        return is_atlassian_cloud_url(self.url)
++        # Multi-Cloud OAuth mode: URL might be None, but we use api.atlassian.com
++        if (
++            self.auth_type == "oauth"
++            and self.oauth_config
++            and self.oauth_config.cloud_id
++        ):
++            # OAuth with cloud_id uses api.atlassian.com which is always Cloud
++            return True
++
++        # For other auth types, check the URL
++        return is_atlassian_cloud_url(self.url) if self.url else False
+ 
+     @property
+     def verify_ssl(self) -> bool:
+diff --git a/tests/unit/jira/test_config.py b/tests/unit/jira/test_config.py
+index 19fc1655f..a0c2815d8 100644
+--- a/tests/unit/jira/test_config.py
++++ b/tests/unit/jira/test_config.py
+@@ -179,3 +179,27 @@ def test_from_env_proxy_settings():
+         assert config.https_proxy == "https://jira-proxy.example.com:8443"
+         assert config.socks_proxy == "socks5://user:pass@jira-proxy.example.com:1080"
+         assert config.no_proxy == "localhost,127.0.0.1,.internal.example.com"
++
++
++def test_is_cloud_oauth_with_cloud_id():
++    """Test that is_cloud returns True for OAuth with cloud_id regardless of URL."""
++    from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig
++
++    # OAuth with cloud_id and no URL - should be Cloud
++    oauth_config = BYOAccessTokenOAuthConfig(
++        cloud_id="test-cloud-id", access_token="test-token"
++    )
++    config = JiraConfig(
++        url=None,  # URL can be None in Multi-Cloud OAuth mode
++        auth_type="oauth",
++        oauth_config=oauth_config,
++    )
++    assert config.is_cloud is True
++
++    # OAuth with cloud_id and server URL - should still be Cloud
++    config = JiraConfig(
++        url="https://jira.example.com",  # Server-like URL
++        auth_type="oauth",
++        oauth_config=oauth_config,
++    )
++    assert config.is_cloud is True

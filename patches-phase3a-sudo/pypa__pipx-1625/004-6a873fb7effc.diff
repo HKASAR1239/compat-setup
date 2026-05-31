@@ -1,0 +1,590 @@
+diff --git a/.github/workflows/bump-changelog.yml b/.github/workflows/bump-changelog.yml
+index 2c895037fc..16249680c4 100644
+--- a/.github/workflows/bump-changelog.yml
++++ b/.github/workflows/bump-changelog.yml
+@@ -13,7 +13,7 @@ concurrency:
+ 
+ env:
+   default-python: "3.12"
+-  minimum-supported-python: "3.8"
++  minimum-supported-python: "3.9"
+ 
+ jobs:
+   bump-changelog:
+diff --git a/.github/workflows/create_tests_package_lists.yml b/.github/workflows/create_tests_package_lists.yml
+index 74709b0991..5564998a98 100644
+--- a/.github/workflows/create_tests_package_lists.yml
++++ b/.github/workflows/create_tests_package_lists.yml
+@@ -11,7 +11,7 @@ jobs:
+     strategy:
+       matrix:
+         os: [ubuntu-latest]
+-        python-version: ["3.12", "3.11", "3.10", "3.9", "3.8"]
++        python-version: ["3.12", "3.11", "3.10", "3.9"]
+         include:
+           - os: macos-latest
+             python-version: "3.12"
+diff --git a/.github/workflows/exhaustive_package_test.yml b/.github/workflows/exhaustive_package_test.yml
+index d768892b60..c9b81b4ad3 100644
+--- a/.github/workflows/exhaustive_package_test.yml
++++ b/.github/workflows/exhaustive_package_test.yml
+@@ -12,7 +12,7 @@ jobs:
+     strategy:
+       matrix:
+         os: [ubuntu-latest, macos-latest, windows-latest]
+-        python-version: ["3.12", "3.11", "3.10", "3.9", "3.8"]
++        python-version: ["3.12", "3.11", "3.10", "3.9"]
+ 
+     steps:
+       - uses: actions/checkout@v4
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 21480ca9f7..545bd7b40b 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -16,7 +16,7 @@ concurrency:
+ 
+ env:
+   default-python: "3.12"
+-  minimum-supported-python: "3.8"
++  minimum-supported-python: "3.9"
+ 
+ jobs:
+   create-tag:
+diff --git a/.github/workflows/tests.yml b/.github/workflows/tests.yml
+index 71450e74c8..063ec252a8 100644
+--- a/.github/workflows/tests.yml
++++ b/.github/workflows/tests.yml
+@@ -14,7 +14,7 @@ concurrency:
+ 
+ env:
+   default-python: "3.12"
+-  minimum-supported-python: "3.8"
++  minimum-supported-python: "3.9"
+ 
+ jobs:
+   tests:
+@@ -23,7 +23,7 @@ jobs:
+       fail-fast: false
+       matrix:
+         os: [ubuntu-latest]
+-        python-version: ["3.12", "3.11", "3.10", "3.9", "3.8"]
++        python-version: ["3.12", "3.11", "3.10", "3.9"]
+         include:
+           - os: windows-latest
+             python-version: "3.12"
+diff --git a/.pre-commit-config.yaml b/.pre-commit-config.yaml
+index a915b442c5..65769e4d47 100644
+--- a/.pre-commit-config.yaml
++++ b/.pre-commit-config.yaml
+@@ -11,7 +11,7 @@ repos:
+   hooks:
+     - id: pyproject-fmt
+ - repo: https://github.com/astral-sh/ruff-pre-commit
+-  rev: v0.6.9
++  rev: v0.11.8
+   hooks:
+   - id: ruff
+     args: [ "--fix", "--unsafe-fixes", "--show-fixes", "--exit-non-zero-on-fix"]
+diff --git a/docs/README.md b/docs/README.md
+index 5779a2aa74..deea534806 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -118,7 +118,7 @@ Upgrade pipx with `py -m pip install --user --upgrade pipx`.
+ ### Using pipx without installing (via zipapp)
+ 
+ You can also use pipx without installing it. The zipapp can be downloaded from
+-[Github releases](https://github.com/pypa/pipx/releases) and you can invoke it with a Python 3.8+ interpreter:
++[Github releases](https://github.com/pypa/pipx/releases) and you can invoke it with a Python 3.9+ interpreter:
+ 
+ ```
+ python pipx.pyz ensurepath
+diff --git a/docs/comparisons.md b/docs/comparisons.md
+index a7732115bc..1332b02b6b 100644
+--- a/docs/comparisons.md
++++ b/docs/comparisons.md
+@@ -125,7 +125,7 @@ Similarities:
+ 
+ pae advantages:
+ 
+-- Supports all versions of Python from 2.7 upward. pipx requires ≥3.8.
++- Supports all versions of Python from 2.7 upward. pipx requires ≥3.9.
+ - Fewer dependencies. (See the detailed comparison for more information.)
+ - Easier to have multiple versions of a single program and/or use different Python versions for a single program.
+ - Somewhat more convenient for running arbitrary command-line programs in virtual environments, installing multiple packages in a single environment, and activating virtual environments.
+diff --git a/docs/contributing.md b/docs/contributing.md
+index 8e5e4eaffe..c5d332f086 100644
+--- a/docs/contributing.md
++++ b/docs/contributing.md
+@@ -131,13 +131,13 @@ nox -s tests-3.12
+ > You can run a specific unit test by passing arguments to pytest, the test runner pipx uses:
+ >
+ > ```
+-> nox -s tests-3.8 -- -k EXPRESSION
++> nox -s tests-3.9 -- -k EXPRESSION
+ > ```
+ >
+ > `EXPRESSION` can be a test name, such as
+ >
+ > ```
+-> nox -s tests-3.8 -- -k test_uninstall
++> nox -s tests-3.9 -- -k test_uninstall
+ > ```
+ >
+ > Coverage errors can usually be ignored when only running a subset of tests.
+diff --git a/docs/installation.md b/docs/installation.md
+index 1666b69139..571bf21674 100644
+--- a/docs/installation.md
++++ b/docs/installation.md
+@@ -1,6 +1,6 @@
+ ## System Requirements
+ 
+-python 3.8+ is required to install pipx. pipx can run binaries from packages with Python 3.3+. Don't have Python 3.8 or
++python 3.9+ is required to install pipx. pipx can run binaries from packages with Python 3.3+. Don't have Python 3.9 or
+ later? See [Python 3 Installation & Setup Guide](https://realpython.com/installing-python/).
+ 
+ You also need to have `pip` installed on your machine for `python3`. Installing it varies from system to system. Consult
+@@ -116,7 +116,7 @@ terminal session and verify `pipx` does run.
+ ### Using pipx without installing (via zipapp)
+ 
+ The zipapp can be downloaded from [Github releases](https://github.com/pypa/pipx/releases) and you can invoke it with a
+-Python 3.8+ interpreter:
++Python 3.9+ interpreter:
+ 
+ ```
+ python pipx.pyz ensurepath
+diff --git a/pyproject.toml b/pyproject.toml
+index b78b5c2991..3e709c5e42 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -20,13 +20,12 @@ license = "MIT"
+ authors = [
+   { name = "Chad Smith", email = "chadsmith.software@gmail.com" },
+ ]
+-requires-python = ">=3.8"
++requires-python = ">=3.9"
+ classifiers = [
+   "License :: OSI Approved :: MIT License",
+   "Operating System :: OS Independent",
+   "Programming Language :: Python",
+   "Programming Language :: Python :: 3 :: Only",
+-  "Programming Language :: Python :: 3.8",
+   "Programming Language :: Python :: 3.9",
+   "Programming Language :: Python :: 3.10",
+   "Programming Language :: Python :: 3.11",
+@@ -80,11 +79,12 @@ lint.extend-select = [
+   "RSE",
+   "RUF012",
+   "RUF100",
+-  "TCH",
++  "TC",
+   "W",
+ ]
+ lint.ignore = [
+   "PERF203",
++  "PLW1508",
+ ]
+ lint.isort = { known-first-party = [
+   "helpers",
+diff --git a/scripts/generate_man.py b/scripts/generate_man.py
+index ce689c3fb3..1be2547898 100755
+--- a/scripts/generate_man.py
++++ b/scripts/generate_man.py
+@@ -13,7 +13,7 @@
+ def main():
+     sys.argv[0] = "pipx"
+     parser, _ = get_command_parser()
+-    parser.man_short_description = cast(str, parser.description).splitlines()[1]  # type: ignore[attr-defined]
++    parser.man_short_description = cast("str", parser.description).splitlines()[1]  # type: ignore[attr-defined]
+ 
+     manpage = Manpage(parser)
+     body = str(manpage)
+diff --git a/src/pipx/__init__.py b/src/pipx/__init__.py
+index f93f32fc73..5a5d477621 100644
+--- a/src/pipx/__init__.py
++++ b/src/pipx/__init__.py
+@@ -1,4 +1,4 @@
+ import sys
+ 
+-if sys.version_info < (3, 8, 0):
+-    sys.exit("Python 3.8 or later is required. See https://github.com/pypa/pipx for installation instructions.")
++if sys.version_info < (3, 9, 0):
++    sys.exit("Python 3.9 or later is required. See https://github.com/pypa/pipx for installation instructions.")
+diff --git a/src/pipx/commands/common.py b/src/pipx/commands/common.py
+index 0f187af977..04d814cb6f 100644
+--- a/src/pipx/commands/common.py
++++ b/src/pipx/commands/common.py
+@@ -379,7 +379,7 @@ def package_name_from_spec(package_spec: str, python: str, *, pip_args: List[str
+         #       will use the pypi name
+         package_name = pypi_name
+         logger.info(f"Determined package name: {package_name}")
+-        logger.info(f"Package name determined in {time.time()-start_time:.1f}s")
++        logger.info(f"Package name determined in {time.time() - start_time:.1f}s")
+         return package_name
+ 
+     # check syntax and clean up spec and pip_args
+@@ -390,7 +390,7 @@ def package_name_from_spec(package_spec: str, python: str, *, pip_args: List[str
+         venv.create_venv(venv_args=[], pip_args=[])
+         package_name = venv.install_package_no_deps(package_or_url=package_spec, pip_args=pip_args)
+ 
+-    logger.info(f"Package name determined in {time.time()-start_time:.1f}s")
++    logger.info(f"Package name determined in {time.time() - start_time:.1f}s")
+     return package_name
+ 
+ 
+diff --git a/src/pipx/constants.py b/src/pipx/constants.py
+index eec4f98dc8..b5dc845843 100644
+--- a/src/pipx/constants.py
++++ b/src/pipx/constants.py
+@@ -6,7 +6,7 @@
+ 
+ PIPX_SHARED_PTH = "pipx_shared.pth"
+ TEMP_VENV_EXPIRATION_THRESHOLD_DAYS = 14
+-MINIMUM_PYTHON_VERSION = "3.8"
++MINIMUM_PYTHON_VERSION = "3.9"
+ MAN_SECTIONS = ["man%d" % i for i in range(1, 10)]
+ FETCH_MISSING_PYTHON = os.environ.get("PIPX_FETCH_MISSING_PYTHON", False)
+ 
+diff --git a/src/pipx/main.py b/src/pipx/main.py
+index f06e47c4e2..c1e87a2287 100644
+--- a/src/pipx/main.py
++++ b/src/pipx/main.py
+@@ -163,7 +163,7 @@ def __init__(self, venv_container: VenvContainer) -> None:
+         self.packages = [str(p.name) for p in sorted(venv_container.iter_venv_dirs())]
+ 
+     def use(self, prefix: str, **kwargs: Any) -> List[str]:
+-        return [f"{prefix}{x[len(prefix):]}" for x in self.packages if x.startswith(canonicalize_name(prefix))]
++        return [f"{prefix}{x[len(prefix) :]}" for x in self.packages if x.startswith(canonicalize_name(prefix))]
+ 
+ 
+ def get_pip_args(parsed_args: Dict[str, str]) -> List[str]:
+diff --git a/src/pipx/pipx_metadata_file.py b/src/pipx/pipx_metadata_file.py
+index 3362698e9f..cb97510e76 100644
+--- a/src/pipx/pipx_metadata_file.py
++++ b/src/pipx/pipx_metadata_file.py
+@@ -114,7 +114,7 @@ def _convert_legacy_metadata(self, metadata_dict: Dict[str, Any]) -> Dict[str, A
+             raise PipxError(
+                 f"""
+                 {self.venv_dir.name}: Unknown metadata version
+-                {metadata_dict['pipx_metadata_version']}. Perhaps it was
++                {metadata_dict["pipx_metadata_version"]}. Perhaps it was
+                 installed with a later version of pipx.
+                 """
+             )
+diff --git a/src/pipx/util.py b/src/pipx/util.py
+index 0951232373..ff83f66455 100644
+--- a/src/pipx/util.py
++++ b/src/pipx/util.py
+@@ -425,9 +425,4 @@ def pipx_wrap(text: str, subsequent_indent: str = "", keep_newlines: bool = Fals
+ 
+ 
+ def is_paths_relative(path: Path, parent: Path):
+-    # Can be replaced with path.is_relative_to() if support for python3.8 is dropped
+-    try:
+-        path.resolve().relative_to(parent.resolve())
+-    except ValueError:
+-        return False
+-    return True
++    return path.is_relative_to(parent)
+diff --git a/src/pipx/venv.py b/src/pipx/venv.py
+index 4f64a4c25c..be761d5295 100644
+--- a/src/pipx/venv.py
++++ b/src/pipx/venv.py
+@@ -348,7 +348,7 @@ def install_package_no_deps(self, package_or_url: str, pip_args: List[str]) -> s
+     def get_venv_metadata_for_package(self, package_name: str, package_extras: Set[str]) -> VenvMetadata:
+         data_start = time.time()
+         venv_metadata = inspect_venv(package_name, package_extras, self.bin_path, self.python_path, self.man_path)
+-        logger.info(f"get_venv_metadata_for_package: {1e3*(time.time()-data_start):.0f}ms")
++        logger.info(f"get_venv_metadata_for_package: {1e3 * (time.time() - data_start):.0f}ms")
+         return venv_metadata
+ 
+     def update_package_metadata(
+diff --git a/testdata/empty_project/pyproject.toml b/testdata/empty_project/pyproject.toml
+index 9b59eaa14c..4876553a1a 100644
+--- a/testdata/empty_project/pyproject.toml
++++ b/testdata/empty_project/pyproject.toml
+@@ -12,10 +12,9 @@ description = "Empty Python Project"
+ authors = [
+   { name = "My Name", email = "me@example.com" },
+ ]
+-requires-python = ">=3.8"
++requires-python = ">=3.9"
+ classifiers = [
+   "Programming Language :: Python :: 3 :: Only",
+-  "Programming Language :: Python :: 3.8",
+   "Programming Language :: Python :: 3.9",
+   "Programming Language :: Python :: 3.10",
+   "Programming Language :: Python :: 3.11",
+diff --git a/testdata/tests_packages/unix-python3.8.txt b/testdata/tests_packages/unix-python3.8.txt
+deleted file mode 100644
+index 470ec0dc06..0000000000
+--- a/testdata/tests_packages/unix-python3.8.txt
++++ /dev/null
+@@ -1,220 +0,0 @@
+-Babel==2.14.0
+-Cython==3.0.10
+-Flask==1.1.4
+-Jinja2==2.11.3
+-Jinja2==3.1.3
+-MarkupSafe==2.1.5
+-PyYAML==5.3.1
+-PyYAML==6.0.1
+-QtPy==2.4.1
+-SecretStorage==3.3.3
+-Send2Trash==1.8.3
+-Weblate==4.3.1
+-Werkzeug==1.0.1
+-ansible==6.7.0
+-ansible_core==2.13.13
+-anyio==4.3.0
+-appdirs==1.4.4
+-argcomplete==1.12.3
+-argcomplete==3.3.0
+-argon2_cffi==23.1.0
+-argon2_cffi_bindings==21.2.0
+-arrow==1.3.0
+-astroid==3.0.3
+-astroid==3.1.0
+-asttokens==2.4.1
+-async_lru==2.0.4
+-attrs==23.2.0
+-awscli==1.18.168
+-backcall==0.2.0
+-backports.tarfile==1.1.1
+-beautifulsoup4==4.12.3
+-black==22.10.0
+-black==22.8.0
+-bleach==6.1.0
+-boto3==1.34.92
+-botocore==1.19.8
+-botocore==1.34.92
+-build==1.2.1
+-cachetools==5.3.3
+-certifi==2024.2.2
+-cffi==1.16.0
+-chardet==5.2.0
+-charset_normalizer==3.3.2
+-click==7.1.2
+-click==8.1.7
+-cloudtoken==2.1.0
+-cmarkgfm==2024.1.14
+-colorama==0.4.3
+-colorama==0.4.6
+-colorlog==6.8.2
+-comm==0.2.2
+-cryptography==42.0.5
+-debugpy==1.8.1
+-decorator==5.1.1
+-deepdiff==5.8.1
+-defusedxml==0.7.1
+-delegator.py==0.1.1
+-dill==0.3.8
+-distlib==0.3.8
+-docutils==0.15.2
+-docutils==0.20.1
+-exceptiongroup==1.2.1
+-executing==2.0.1
+-fastjsonschema==2.19.1
+-filelock==3.13.4
+-fqdn==1.5.1
+-h11==0.14.0
+-halo==0.0.31
+-httpcore==1.0.5
+-httpx==0.27.0
+-idna==3.7
+-ifaddr==0.1.7
+-importlib_metadata==7.1.0
+-importlib_resources==6.4.0
+-iniconfig==2.0.0
+-ipykernel==6.29.4
+-ipython==7.16.1
+-ipython==8.12.3
+-ipywidgets==8.1.2
+-isoduration==20.11.0
+-isort==5.13.2
+-isort==5.6.4
+-itsdangerous==1.1.0
+-jaraco.classes==3.4.0
+-jaraco.clipboard==2.0.1
+-jaraco.context==5.3.0
+-jaraco.functools==4.0.1
+-jedi==0.19.1
+-jeepney==0.8.0
+-jmespath==0.10.0
+-jmespath==1.0.1
+-json5==0.9.25
+-jsonpointer==2.4
+-jsonschema==4.21.1
+-jsonschema_specifications==2023.12.1
+-jupyter==1.0.0
+-jupyter_client==8.6.1
+-jupyter_console==6.6.3
+-jupyter_core==5.7.2
+-jupyter_events==0.10.0
+-jupyter_lsp==2.2.5
+-jupyter_server==2.14.0
+-jupyter_server_terminals==0.5.3
+-jupyterlab==4.1.6
+-jupyterlab_pygments==0.3.0
+-jupyterlab_server==2.27.1
+-jupyterlab_widgets==3.0.10
+-kaggle==1.6.11
+-keyring==21.8.0
+-keyring==25.1.0
+-log_symbols==0.0.14
+-lxml==4.9.4
+-markdown_it_py==3.0.0
+-matplotlib_inline==0.1.7
+-mccabe==0.7.0
+-mdurl==0.1.2
+-mistune==3.0.2
+-more_itertools==10.2.0
+-mypy_extensions==1.0.0
+-nbclient==0.10.0
+-nbconvert==7.16.3
+-nbformat==5.10.4
+-nest_asyncio==1.6.0
+-nh3==0.2.17
+-notebook==7.1.3
+-notebook_shim==0.2.4
+-nox==2022.1.7
+-nox==2023.4.22
+-ordered_set==4.1.0
+-overrides==7.7.0
+-packaging==20.9
+-packaging==24.0
+-pandocfilters==1.5.1
+-parso==0.8.4
+-pathspec==0.12.1
+-pbr==5.6.0
+-pexpect==4.9.0
+-pickleshare==0.7.5
+-pip==23.3.2
+-pip==24.0
+-pkginfo==1.10.0
+-pkgutil_resolve_name==1.3.10
+-platformdirs==4.2.1
+-pluggy==1.5.0
+-prometheus_client==0.20.0
+-prompt_toolkit==3.0.43
+-psutil==5.9.8
+-ptyprocess==0.7.0
+-pure_eval==0.2.2
+-py==1.11.0
+-pyasn1==0.6.0
+-pycowsay==0.0.0.2
+-pycparser==2.22
+-pygdbmi==0.10.0.0
+-pygments==2.17.2
+-pylint==3.0.4
+-pylint==3.1.0
+-pyparsing==3.1.2
+-pyperclip==1.8.2
+-pyproject_api==1.6.1
+-pyproject_hooks==1.0.0
+-pytest==8.1.1
+-python_dateutil==2.9.0.post0
+-python_json_logger==2.0.7
+-python_slugify==8.0.4
+-pytz==2024.1
+-pyzmq==26.0.2
+-qtconsole==5.5.1
+-readme_renderer==43.0
+-referencing==0.35.0
+-requests==2.31.0
+-requests_toolbelt==1.0.0
+-resolvelib==0.8.1
+-rfc3339_validator==0.1.4
+-rfc3986==2.0.0
+-rfc3986_validator==0.1.1
+-rich==13.7.1
+-rpds_py==0.18.0
+-rsa==4.5
+-ruamel.yaml.clib==0.2.8
+-ruamel.yaml==0.17.40
+-s3transfer==0.10.1
+-s3transfer==0.3.7
+-setuptools==69.5.1
+-setuptools_scm==8.0.4
+-shell-functools==0.3.0
+-six==1.16.0
+-sniffio==1.3.1
+-soupsieve==2.5
+-spinners==0.0.24
+-stack_data==0.6.3
+-termcolor==2.4.0
+-terminado==0.18.1
+-text_unidecode==1.3
+-tinycss2==1.3.0
+-tomli==2.0.1
+-tomlkit==0.12.4
+-tornado==6.4
+-tox==3.28.0
+-tox==4.14.2
+-tox_ini_fmt==0.5.0
+-tqdm==4.66.2
+-traitlets==5.14.3
+-twine==5.0.0
+-types_python_dateutil==2.9.0.20240316
+-typing_extensions==4.11.0
+-uri_template==1.3.0
+-urllib3==1.25.11
+-urllib3==1.26.18
+-urllib3==2.2.1
+-virtualenv==20.26.0
+-wcwidth==0.2.13
+-webcolors==1.13
+-webencodings==0.5.1
+-websocket_client==1.8.0
+-wheel==0.43.0
+-widgetsnbextension==4.0.10
+-xdg==5.1.1
+-zest.releaser==9.1.2
+-zipp==3.18.1
+diff --git a/tests/test_animate.py b/tests/test_animate.py
+index d70e0b2e36..758d2bdb73 100644
+--- a/tests/test_animate.py
++++ b/tests/test_animate.py
+@@ -66,7 +66,7 @@ def test_delay_suppresses_output(capsys, monkeypatch):
+ @pytest.mark.parametrize(
+     "env_columns,expected_frame_message",
+     [
+-        (45, f"{TEST_STRING_40_CHAR:.{45-6}}..."),
++        (45, f"{TEST_STRING_40_CHAR:.{45 - 6}}..."),
+         (46, f"{TEST_STRING_40_CHAR}"),
+         (47, f"{TEST_STRING_40_CHAR}"),
+     ],
+@@ -87,7 +87,7 @@ def test_line_lengths_emoji(capsys, monkeypatch, env_columns, expected_frame_mes
+ @pytest.mark.parametrize(
+     "env_columns,expected_frame_message",
+     [
+-        (43, f"{TEST_STRING_40_CHAR:.{43-4}}"),
++        (43, f"{TEST_STRING_40_CHAR:.{43 - 4}}"),
+         (44, f"{TEST_STRING_40_CHAR}"),
+         (45, f"{TEST_STRING_40_CHAR}"),
+     ],
+diff --git a/tests/test_install.py b/tests/test_install.py
+index 2cff936880..e794e41227 100644
+--- a/tests/test_install.py
++++ b/tests/test_install.py
+@@ -409,15 +409,15 @@ def test_passed_python_and_force_flag_warning(pipx_temp_env, capsys):
+ 
+     assert not run_pipx_cli(["install", "black", "--force"])
+     captured = capsys.readouterr()
+-    assert (
+-        "--python is ignored when --force is passed." not in captured.out
+-    ), "Should only print warning if both flags present"
++    assert "--python is ignored when --force is passed." not in captured.out, (
++        "Should only print warning if both flags present"
++    )
+ 
+     assert not run_pipx_cli(["install", "pycowsay", "--force"])
+     captured = capsys.readouterr()
+-    assert (
+-        "--python is ignored when --force is passed." not in captured.out
+-    ), "Should not print warning if package does not exist yet"
++    assert "--python is ignored when --force is passed." not in captured.out, (
++        "Should not print warning if package does not exist yet"
++    )
+ 
+ 
+ @pytest.mark.parametrize(

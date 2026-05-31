@@ -1,0 +1,13 @@
+diff --git a/src/pdm/_types.py b/src/pdm/_types.py
+index ae792316ac..5b33388944 100644
+--- a/src/pdm/_types.py
++++ b/src/pdm/_types.py
+@@ -81,7 +81,7 @@ def url_with_credentials(self) -> HiddenText:
+         assert self.url is not None
+         self.populate_keyring_auth()
+         if not self.username or not self.password:
+-            return expand_env_vars_in_auth(self.url)
++            return hide_url(expand_env_vars_in_auth(self.url))
+         parsed = urlsplit(self.url)
+         *_, netloc = parsed.netloc.rpartition("@")
+         netloc = f"{self.username}:{self.password}@{netloc}"

@@ -1,0 +1,13 @@
+diff --git a/kubernetes/base/config/exec_provider.py b/kubernetes/base/config/exec_provider.py
+index 317a566955..dad60f9543 100644
+--- a/kubernetes/base/config/exec_provider.py
++++ b/kubernetes/base/config/exec_provider.py
+@@ -54,7 +54,7 @@ def __init__(self, exec_config, cwd, cluster=None):
+                 additional_vars[name] = value
+             self.env.update(additional_vars)
+         if exec_config.safe_get('provideClusterInfo'):
+-            self.cluster = cluster
++            self.cluster = cluster.value
+         else:
+             self.cluster = None
+         self.cwd = cwd or None

@@ -1,0 +1,24 @@
+diff --git a/src/urllib3/http2.py b/src/urllib3/http2.py
+index 9cf7720d04..05de106f73 100644
+--- a/src/urllib3/http2.py
++++ b/src/urllib3/http2.py
+@@ -183,6 +183,7 @@ def __init__(
+             request_url=request_url,
+         )
+         self._data = data
++        self.length_remaining = 0
+ 
+     @property
+     def data(self) -> bytes:
+diff --git a/test/with_dummyserver/test_https.py b/test/with_dummyserver/test_https.py
+index 3ec313699c..aa22f11879 100644
+--- a/test/with_dummyserver/test_https.py
++++ b/test/with_dummyserver/test_https.py
+@@ -139,6 +139,7 @@ def test_simple(self, http_version: str) -> None:
+             r = https_pool.request("GET", "/")
+             assert r.status == 200, r.data
+             assert r.headers["server"] == f"hypercorn-{http_version}"
++            assert r.data == b"Dummy server!"
+ 
+     @resolvesLocalhostFQDN()
+     def test_dotted_fqdn(self) -> None:

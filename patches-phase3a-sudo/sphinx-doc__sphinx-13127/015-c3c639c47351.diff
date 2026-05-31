@@ -1,0 +1,30 @@
+diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
+index 82642976f19..a1efb33d59d 100644
+--- a/sphinx/builders/linkcheck.py
++++ b/sphinx/builders/linkcheck.py
+@@ -569,7 +569,11 @@ def _check_uri(self, uri: str, hyperlink: Hyperlink) -> _URIProperties:
+ 
+             except requests._IgnoredRedirection as err:
+                 # A redirection to an ignored URI was attempted; report it appropriately
+-                return _Status.IGNORED, err.destination, err.status_code
++                return (
++                    _Status.IGNORED,
++                    f'ignored redirect: {err.destination}',
++                    err.status_code,
++                )
+ 
+             except HTTPError as err:
+                 error_message = str(err)
+diff --git a/tests/test_builders/test_build_linkcheck.py b/tests/test_builders/test_build_linkcheck.py
+index a3a0d2b0f35..d85438491f8 100644
+--- a/tests/test_builders/test_build_linkcheck.py
++++ b/tests/test_builders/test_build_linkcheck.py
+@@ -979,7 +979,7 @@ def test_ignore_redirection(app):
+         'filename': 'index.rst',
+         'lineno': 1,
+         'uri': f'http://{address}/',
+-        'info': f'http://{address}/redirected',
++        'info': f'ignored redirect: http://{address}/redirected',
+     }
+ 
+ 

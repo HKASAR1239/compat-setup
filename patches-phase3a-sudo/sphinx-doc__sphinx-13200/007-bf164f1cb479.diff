@@ -1,0 +1,80 @@
+diff --git a/sphinx/util/inspect.py b/sphinx/util/inspect.py
+index a59bdfadf36..72322bf9c32 100644
+--- a/sphinx/util/inspect.py
++++ b/sphinx/util/inspect.py
+@@ -254,17 +254,36 @@ def is_classmethod_descriptor(
+         for basecls in getmro(cls):
+             meth = basecls.__dict__.get(name, sentinel)
+             if meth is not sentinel:
+-                return isinstance(obj, types.ClassMethodDescriptorType)
++                return is_classmethod_descriptor(obj)
+     return False
+ 
+ 
++def is_native_classmethod(obj: Any, cls: Any = None, name: str | None = None):
++    """Check if the object is a class method implemented in C."""
++    if is_classmethod_descriptor(obj, cls, name):
++        return True
++    if (
++        isbuiltin(obj)
++        and getattr(obj, '__self__', None) is not None
++        and isclass(obj.__self__)
++    ):
++        return True
++    if cls and name:
++        # trace __mro__ if the method is defined in parent class
++        sentinel = object()
++        for basecls in getmro(cls):
++            meth = basecls.__dict__.get(name, sentinel)
++            if meth is not sentinel:
++                return is_native_classmethod(obj)
++    return False
++
+ def is_classmethod_like(
+     obj: Any, cls: Any = None, name: str | None = None
+ ) -> TypeIs[classmethod | types.ClassMethodDescriptorType]:
+     """Check if the object behaves like a class method."""
+     # Built-in methods are instances of ClassMethodDescriptorType
+     # while pure Python class methods are instances of classmethod().
+-    return isclassmethod(obj, cls, name) or is_classmethod_descriptor(obj, cls, name)
++    return isclassmethod(obj, cls, name) or is_native_classmethod(obj, cls, name)
+ 
+ 
+ def isstaticmethod(
+diff --git a/tests/test_util/test_util_inspect.py b/tests/test_util/test_util_inspect.py
+index f80e258490a..498eb79f0f1 100644
+--- a/tests/test_util/test_util_inspect.py
++++ b/tests/test_util/test_util_inspect.py
+@@ -703,6 +703,32 @@ def test_isclassmethod():
+     assert not inspect.isclassmethod(Inherited.meth)
+ 
+ 
++def test_is_classmethod_descriptor():
++    assert inspect.is_classmethod_descriptor(int.__dict__['from_bytes'])
++    assert inspect.is_classmethod_descriptor(bytes.__dict__['fromhex'])
++
++    assert not inspect.is_classmethod_descriptor(int.from_bytes)
++    assert not inspect.is_classmethod_descriptor(bytes.fromhex)
++
++    assert not inspect.is_classmethod_descriptor(int.__init__)
++    assert not inspect.is_classmethod_descriptor(int.bit_count)
++
++    assert not inspect.is_classmethod_descriptor(Base.classmeth)
++    assert not inspect.is_classmethod_descriptor(Inherited.classmeth)
++
++
++def test_is_classmethod_like():
++    assert inspect.is_classmethod_like(Base.classmeth)
++    assert not inspect.is_classmethod_like(Base.meth)
++    assert inspect.is_classmethod_like(Inherited.classmeth)
++    assert not inspect.is_classmethod_like(Inherited.meth)
++
++    assert inspect.is_classmethod_like(int.from_bytes)
++    assert inspect.is_classmethod_like(bytes.fromhex)
++    assert not inspect.is_classmethod_like(int.__init__)
++    assert not inspect.is_classmethod_like(int.bit_count)
++
++
+ def test_isstaticmethod():
+     assert inspect.isstaticmethod(Base.staticmeth, Base, 'staticmeth')
+     assert not inspect.isstaticmethod(Base.meth, Base, 'meth')

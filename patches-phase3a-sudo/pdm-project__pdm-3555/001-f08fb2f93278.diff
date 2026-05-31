@@ -1,0 +1,196 @@
+diff --git a/src/pdm/_types.py b/src/pdm/_types.py
+index d3fb1cd94f..384c3f053c 100644
+--- a/src/pdm/_types.py
++++ b/src/pdm/_types.py
+@@ -73,10 +73,10 @@ def __rich__(self) -> str:
+         return "\n".join(lines)
+ 
+     @property
+-    def url_with_credentials(self) -> str:
++    def url_with_credentials(self) -> HiddenText:
+         from urllib.parse import urlsplit, urlunsplit
+ 
+-        from pdm.utils import expand_env_vars_in_auth
++        from pdm.utils import expand_env_vars_in_auth, hide_url
+ 
+         assert self.url is not None
+         self.populate_keyring_auth()
+@@ -85,7 +85,8 @@ def url_with_credentials(self) -> str:
+         parsed = urlsplit(self.url)
+         *_, netloc = parsed.netloc.rpartition("@")
+         netloc = f"{self.username}:{self.password}@{netloc}"
+-        return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
++        url = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
++        return hide_url(url)
+ 
+ 
+ RequirementDict = Union[str, dict[str, Union[str, bool]]]
+@@ -130,3 +131,23 @@ class NotSetType:
+ 
+ 
+ NotSet = NotSetType()
++
++
++@dc.dataclass(frozen=True)
++class HiddenText:
++    secret: str
++    redacted: str
++
++    def __str__(self) -> str:
++        return self.redacted
++
++    def __repr__(self) -> str:
++        return repr(str(self))
++
++    def __eq__(self, other: Any) -> bool:
++        if type(self) is not type(other):
++            return NotImplemented
++
++        # The string being used for redaction doesn't also have to match,
++        # just the raw, original string.
++        return self.secret == other.secret
+diff --git a/src/pdm/installers/uv.py b/src/pdm/installers/uv.py
+index 1ad20eb3d4..507d3b32fb 100644
+--- a/src/pdm/installers/uv.py
++++ b/src/pdm/installers/uv.py
+@@ -3,6 +3,7 @@
+ import subprocess
+ from typing import Any
+ 
++from pdm._types import HiddenText
+ from pdm.environments.local import PythonLocalEnvironment
+ from pdm.exceptions import PdmUsageError
+ from pdm.installers.base import BaseSynchronizer
+@@ -44,11 +45,12 @@ def synchronize(self) -> None:
+             builder.build_uv_lock(include_self=self.install_self)
+             cmd = self._get_sync_command()
+             self.environment.project.core.ui.echo(f"Running uv sync command: {cmd}", verbosity=Verbosity.DETAIL)
+-            subprocess.run(cmd, check=True, cwd=self.environment.project.root)
++            real_cmd = [s.secret if isinstance(s, HiddenText) else s for s in cmd]
++            subprocess.run(real_cmd, check=True, cwd=self.environment.project.root)
+ 
+-    def _get_sync_command(self) -> list[str]:
++    def _get_sync_command(self) -> list[str | HiddenText]:
+         core = self.environment.project.core
+-        cmd = [
++        cmd: list[str | HiddenText] = [
+             *core.uv_cmd,
+             "sync",
+             "--all-extras",
+@@ -68,21 +70,21 @@ def _get_sync_command(self) -> list[str]:
+             cmd.append("--no-install-project")
+         first_index = True
+         for source in self.environment.project.sources:
+-            assert source.url is not None
++            url = source.url_with_credentials
+             if source.type == "find_links":
+-                cmd.extend(["--find-links", source.url])
++                cmd.extend(["--find-links", url])
+             elif first_index:
+-                cmd.extend(["--index-url", source.url])
++                cmd.extend(["--index-url", url])
+                 first_index = False
+             else:
+-                cmd.extend(["--extra-index-url", source.url])
++                cmd.extend(["--extra-index-url", url])
+         if self.use_install_cache:
+             cmd.extend(["--link-mode", self.environment.project.config["install.cache_method"]])
+         return cmd
+ 
+ 
+ class QuietUvSynchronizer(UvSynchronizer):
+-    def _get_sync_command(self) -> list[str]:
++    def _get_sync_command(self) -> list[str | HiddenText]:
+         cmd = super()._get_sync_command()
+         if "--verbose" in cmd:
+             cmd.remove("--verbose")
+diff --git a/src/pdm/resolver/uv.py b/src/pdm/resolver/uv.py
+index 50dc73ff25..417f7ef5de 100644
+--- a/src/pdm/resolver/uv.py
++++ b/src/pdm/resolver/uv.py
+@@ -8,6 +8,7 @@
+ from pathlib import Path
+ from typing import TYPE_CHECKING, Any
+ 
++from pdm._types import HiddenText
+ from pdm.models.candidates import Candidate
+ from pdm.models.markers import get_marker
+ from pdm.models.repositories import Package
+@@ -53,8 +54,13 @@ def __post_init__(self) -> None:
+                 "the resolution may be inaccurate."
+             )
+ 
+-    def _build_lock_command(self) -> list[str]:
+-        cmd = [*self.project.core.uv_cmd, "lock", "-p", str(self.environment.interpreter.executable)]
++    def _build_lock_command(self) -> list[str | HiddenText]:
++        cmd: list[str | HiddenText] = [
++            *self.project.core.uv_cmd,
++            "lock",
++            "-p",
++            str(self.environment.interpreter.executable),
++        ]
+         if self.project.core.ui.verbosity > 0:
+             cmd.append("--verbose")
+         if not self.project.core.state.enable_cache:
+@@ -185,7 +191,8 @@ def resolve(self) -> Resolution:
+                     self.reporter.stop()
+                 uv_lock_command = self._build_lock_command()
+                 self.project.core.ui.echo(f"Running uv lock command: {uv_lock_command}", verbosity=Verbosity.DETAIL)
+-                subprocess.run(uv_lock_command, cwd=self.project.root, check=True)
++                real_command = [s.secret if isinstance(s, HiddenText) else s for s in uv_lock_command]
++                subprocess.run(real_command, cwd=self.project.root, check=True)
+             finally:
+                 if isinstance(self.reporter, RichLockReporter):
+                     self.reporter.start()
+diff --git a/src/pdm/utils.py b/src/pdm/utils.py
+index b2b8768f67..a4145d48c3 100644
+--- a/src/pdm/utils.py
++++ b/src/pdm/utils.py
+@@ -34,7 +34,7 @@
+     from re import Match
+     from typing import IO, Any, Iterator
+ 
+-    from pdm._types import FileHash, RepositoryConfig
++    from pdm._types import FileHash, HiddenText, RepositoryConfig
+     from pdm.compat import Distribution
+ 
+ try:
+@@ -567,3 +567,16 @@ def get_requirement_from_override(name: str, value: str) -> str:
+         else:
+             req = f"{name}{value}"
+     return req
++
++
++def hide_url(url: str) -> HiddenText:
++    """Redact the URL for display purposes."""
++    from pdm._types import HiddenText
++
++    parsed = parse.urlsplit(url)
++    if "@" not in parsed.netloc:
++        return HiddenText(url, url)
++    *_, netloc = parsed.netloc.rpartition("@")
++    netloc = f"*****@{netloc}"
++    redacted = parse.urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
++    return HiddenText(url, redacted)
+diff --git a/tests/test_utils.py b/tests/test_utils.py
+index de728b96dd..2a7a83196f 100644
+--- a/tests/test_utils.py
++++ b/tests/test_utils.py
+@@ -496,3 +496,17 @@ def test_invalidate_project_name(name):
+ )
+ def test_sanitize_project_name(given, sanitized):
+     assert utils.sanitize_project_name(given) == sanitized
++
++
++@pytest.mark.parametrize(
++    "url, redacted",
++    [
++        ("http://user:pass@localhost:8000/path?query=1#fragment", "http://*****@localhost:8000/path?query=1#fragment"),
++        ("https://example.com", "https://example.com"),
++        ("ftp://ftp.example.com/file.txt", "ftp://ftp.example.com/file.txt"),
++    ],
++)
++def test_hide_url(url, redacted):
++    hidden = utils.hide_url(url)
++    assert hidden.secret == url
++    assert hidden.redacted == str(hidden) == redacted

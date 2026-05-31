@@ -1,0 +1,55 @@
+diff --git a/conans/model/info.py b/conans/model/info.py
+index 5370429db22..a2b9ee85387 100644
+--- a/conans/model/info.py
++++ b/conans/model/info.py
+@@ -66,6 +66,7 @@ def __init__(self, ref, package_id, default_package_id_mode):
+         self._package_id = package_id
+         self.name = self.version = self.user = self.channel = self.package_id = None
+         self.recipe_revision = None
++        self.package_id_mode = default_package_id_mode
+ 
+         try:
+             func_package_id_mode = getattr(self, default_package_id_mode)
+@@ -242,7 +243,7 @@ def __init__(self, refs, default_package_id_mode):
+ 
+     def copy(self):
+         # For build_id() implementation
+-        refs = [r._ref for r in self._refs] if self._refs else None
++        refs = {r._ref: r.package_id_mode for r in self._refs} if self._refs else None
+         return PythonRequiresInfo(refs, self._default_package_id_mode)
+ 
+     def __bool__(self):
+diff --git a/conans/test/integration/package_id/package_id_modes_test.py b/conans/test/integration/package_id/package_id_modes_test.py
+index 7482f043a10..f8555058658 100644
+--- a/conans/test/integration/package_id/package_id_modes_test.py
++++ b/conans/test/integration/package_id/package_id_modes_test.py
+@@ -118,16 +118,23 @@ class Dep(ConanFile):
+                 "pkg/conanfile.py": GenConanfile("pkg", "0.1").with_python_requires("dep/[*]")})
+         c.run("create dep --version=0.1")
+         c.run("create pkg")
+-        c.assert_listed_binary({"pkg/0.1": ("fcf70699eb821f51cd4f3e228341ac4f405ad220", "Build")})
++        c.assert_listed_binary({"pkg/0.1": ("331c17383dcdf37f79bc2b86fa55ac56afdc6fec", "Build")})
+ 
+-        # using dep 0.2, still same, because dependency chose "minor"
++        # using dep 0.2, still same, because dependency chose "major"
+         c.run("create dep --version=0.1.1")
+         c.run("create pkg")
+-        c.assert_listed_binary({"pkg/0.1": ("fcf70699eb821f51cd4f3e228341ac4f405ad220", "Build")})
++        c.assert_listed_binary({"pkg/0.1": ("331c17383dcdf37f79bc2b86fa55ac56afdc6fec", "Build")})
+ 
+-        # using dep 0.2, still same, because dependency chose "minor"
++        # using dep 0.2, still same, because dependency chose "major"
+         c.run("create dep --version=0.2")
+         c.run("create pkg")
+-        c.assert_listed_binary({"pkg/0.1": ("56934f87c11792e356423e081c7cd490f3c1fbe0", "Build")})
+-
++        c.assert_listed_binary({"pkg/0.1": ("331c17383dcdf37f79bc2b86fa55ac56afdc6fec", "Build")})
++        c.run("list *:*")
++        assert "dep/0.Y.Z" in c.out
+ 
++        # using dep 0.2, new package_id, because dependency chose "major"
++        c.run("create dep --version=1.0")
++        c.run("create pkg")
++        c.assert_listed_binary({"pkg/0.1": ("9b015e30b768df0217ffa2c270f60227c998e609", "Build")})
++        c.run("list *:*")
++        assert "dep/1.Y.Z" in c.out

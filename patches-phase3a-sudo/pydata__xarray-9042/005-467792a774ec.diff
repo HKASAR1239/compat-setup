@@ -1,0 +1,196 @@
+diff --git a/.github/workflows/ci-additional.yaml b/.github/workflows/ci-additional.yaml
+index e264b6aee96..5f1e1b38705 100644
+--- a/.github/workflows/ci-additional.yaml
++++ b/.github/workflows/ci-additional.yaml
+@@ -136,7 +136,7 @@ jobs:
+           python -m mypy --install-types --non-interactive --cobertura-xml-report mypy_report xarray/
+ 
+       - name: Upload mypy coverage to Codecov
+-        uses: codecov/codecov-action@v4.4.0
++        uses: codecov/codecov-action@v4.4.1
+         with:
+           file: mypy_report/cobertura.xml
+           flags: mypy
+@@ -190,7 +190,7 @@ jobs:
+           python -m mypy --install-types --non-interactive --cobertura-xml-report mypy_report xarray/
+ 
+       - name: Upload mypy coverage to Codecov
+-        uses: codecov/codecov-action@v4.4.0
++        uses: codecov/codecov-action@v4.4.1
+         with:
+           file: mypy_report/cobertura.xml
+           flags: mypy39
+@@ -251,7 +251,7 @@ jobs:
+           python -m pyright xarray/
+ 
+       - name: Upload pyright coverage to Codecov
+-        uses: codecov/codecov-action@v4.4.0
++        uses: codecov/codecov-action@v4.4.1
+         with:
+           file: pyright_report/cobertura.xml
+           flags: pyright
+@@ -310,7 +310,7 @@ jobs:
+           python -m pyright xarray/
+ 
+       - name: Upload pyright coverage to Codecov
+-        uses: codecov/codecov-action@v4.4.0
++        uses: codecov/codecov-action@v4.4.1
+         with:
+           file: pyright_report/cobertura.xml
+           flags: pyright39
+diff --git a/.github/workflows/ci.yaml b/.github/workflows/ci.yaml
+index 2ad58509ae4..2322c8b771d 100644
+--- a/.github/workflows/ci.yaml
++++ b/.github/workflows/ci.yaml
+@@ -7,11 +7,12 @@ on:
+     branches:
+       - "main"
+     paths:
+-      - 'ci/**'
+-      - '.github/**'
+-      - '/*'  # covers files such as `pyproject.toml`
+-      - 'properties/**'
+-      - 'xarray/**'
++      - "ci/**"
++      - ".github/**"
++      - "/*" # covers files such as `pyproject.toml`
++      - "/.*" # ...and dotfiles in the root such as `.pre-commit-config.yaml`
++      - "properties/**"
++      - "xarray/**"
+   workflow_dispatch: # allows you to trigger manually
+ 
+ concurrency:
+@@ -53,7 +54,7 @@ jobs:
+       matrix:
+         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+         # Bookend python versions
+-        python-version: ["3.9",  "3.12"]
++        python-version: ["3.9", "3.12"]
+         env: [""]
+         include:
+           # Minimum python version:
+@@ -165,7 +166,7 @@ jobs:
+           path: pytest.xml
+ 
+       - name: Upload code coverage to Codecov
+-        uses: codecov/codecov-action@v4.4.0
++        uses: codecov/codecov-action@v4.4.1
+         with:
+           file: ./coverage.xml
+           flags: unittests
+diff --git a/.github/workflows/upstream-dev-ci.yaml b/.github/workflows/upstream-dev-ci.yaml
+index 731a9c3ff55..e2fbabf39c4 100644
+--- a/.github/workflows/upstream-dev-ci.yaml
++++ b/.github/workflows/upstream-dev-ci.yaml
+@@ -146,7 +146,7 @@ jobs:
+         run: |
+           python -m mypy --install-types --non-interactive --cobertura-xml-report mypy_report
+       - name: Upload mypy coverage to Codecov
+-        uses: codecov/codecov-action@v4.4.0
++        uses: codecov/codecov-action@v4.4.1
+         with:
+           file: mypy_report/cobertura.xml
+           flags: mypy
+diff --git a/ci/install-upstream-wheels.sh b/ci/install-upstream-wheels.sh
+index fc19516f480..b43c6a61ec1 100755
+--- a/ci/install-upstream-wheels.sh
++++ b/ci/install-upstream-wheels.sh
+@@ -1,13 +1,21 @@
+ #!/usr/bin/env bash
+ 
++if which micromamba >/dev/null; then
++    conda=micromamba
++elif which mamba >/dev/null; then
++    conda=mamba
++else
++    conda=conda
++fi
++
+ # temporarily (?) remove numbagg and numba
+-micromamba remove -y numba numbagg sparse
++$conda remove -y numba numbagg sparse
+ # temporarily remove numexpr
+-micromamba remove -y numexpr
++$conda remove -y numexpr
+ # temporarily remove backends
+-micromamba remove -y cf_units hdf5 h5py netcdf4 pydap
++$conda remove -y cf_units hdf5 h5py netcdf4 pydap
+ # forcibly remove packages to avoid artifacts
+-micromamba remove -y --force \
++$conda remove -y --force \
+     numpy \
+     scipy \
+     pandas \
+@@ -19,6 +27,7 @@ micromamba remove -y --force \
+     bottleneck \
+     flox
+     # pint
++
+ # to limit the runtime of Upstream CI
+ python -m pip install \
+     -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple \
+@@ -45,7 +54,7 @@ python -m pip install \
+     git+https://github.com/dask/dask \
+     git+https://github.com/dask/dask-expr \
+     git+https://github.com/dask/distributed \
+-    git+https://github.com/zarr-developers/zarr \
++    git+https://github.com/zarr-developers/zarr.git@main \
+     git+https://github.com/Unidata/cftime \
+     git+https://github.com/pypa/packaging \
+     git+https://github.com/hgrecco/pint \
+diff --git a/doc/ecosystem.rst b/doc/ecosystem.rst
+index 076874d82f3..63f60cd0090 100644
+--- a/doc/ecosystem.rst
++++ b/doc/ecosystem.rst
+@@ -74,6 +74,7 @@ Extend xarray capabilities
+ - `Collocate <https://github.com/cistools/collocate>`_: Collocate xarray trajectories in arbitrary physical dimensions
+ - `eofs <https://ajdawson.github.io/eofs/>`_: EOF analysis in Python.
+ - `hypothesis-gufunc <https://hypothesis-gufunc.readthedocs.io/en/latest/>`_: Extension to hypothesis. Makes it easy to write unit tests with xarray objects as input.
++- `ntv-pandas <https://github.com/loco-philippe/ntv-pandas>`_ : A tabular analyzer and a semantic, compact and reversible converter for multidimensional and tabular data
+ - `nxarray <https://github.com/nxarray/nxarray>`_: NeXus input/output capability for xarray.
+ - `xarray-compare <https://github.com/astropenguin/xarray-compare>`_: xarray extension for data comparison.
+ - `xarray-dataclasses <https://github.com/astropenguin/xarray-dataclasses>`_: xarray extension for typed DataArray and Dataset creation.
+diff --git a/doc/user-guide/computation.rst b/doc/user-guide/computation.rst
+index f8141f40321..f99d41be538 100644
+--- a/doc/user-guide/computation.rst
++++ b/doc/user-guide/computation.rst
+@@ -50,7 +50,7 @@ Use :py:func:`~xarray.where` to conditionally switch between values:
+ 
+     xr.where(arr > 0, "positive", "negative")
+ 
+-Use `@` to perform matrix multiplication:
++Use `@` to compute the :py:func:`~xarray.dot` product:
+ 
+ .. ipython:: python
+ 
+diff --git a/doc/user-guide/pandas.rst b/doc/user-guide/pandas.rst
+index 76349fcd371..26fa7ea5c0c 100644
+--- a/doc/user-guide/pandas.rst
++++ b/doc/user-guide/pandas.rst
+@@ -110,6 +110,26 @@ work even if not the hierarchical index is not a full tensor product:
+     s[::2]
+     s[::2].to_xarray()
+ 
++Lossless and reversible conversion
++~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++
++The previous ``Dataset`` example shows that the conversion is not reversible (lossy roundtrip) and
++that the size of the ``Dataset`` increases.
++
++Particularly after a roundtrip, the following deviations are noted:
++
++- a non-dimension Dataset ``coordinate`` is converted into ``variable``
++- a non-dimension DataArray ``coordinate`` is not converted
++- ``dtype`` is not allways the same (e.g. "str" is converted to "object")
++- ``attrs`` metadata is not conserved
++
++To avoid these problems, the third-party `ntv-pandas <https://github.com/loco-philippe/ntv-pandas>`__ library offers lossless and reversible conversions between
++``Dataset``/ ``DataArray`` and pandas ``DataFrame`` objects.
++
++This solution is particularly interesting for converting any ``DataFrame`` into a ``Dataset`` (the converter find the multidimensional structure hidden by the tabular structure).
++
++The `ntv-pandas examples <https://github.com/loco-philippe/ntv-pandas/tree/main/example>`__ show how to improve the conversion for the previous ``Dataset`` example and for more complex examples.
++
+ Multi-dimensional data
+ ~~~~~~~~~~~~~~~~~~~~~~
+ 

@@ -1,0 +1,50 @@
+diff --git a/conans/client/graph/python_requires.py b/conans/client/graph/python_requires.py
+index 844f52a10b3..a861e53df44 100644
+--- a/conans/client/graph/python_requires.py
++++ b/conans/client/graph/python_requires.py
+@@ -32,8 +32,8 @@ def all_refs(self):
+         return [r.ref for r in self._pyrequires.values()]
+ 
+     def info_requires(self):
+-        return {r.ref: getattr(pyreq.conanfile, "package_id_python_mode", None)
+-                for r, pyreq in self._pyrequires.items()}
++        return {pyreq.ref: getattr(pyreq.conanfile, "package_id_python_mode", None)
++                for pyreq in self._pyrequires.values()}
+ 
+     def items(self):
+         return self._pyrequires.items()
+diff --git a/conans/test/integration/package_id/package_id_modes_test.py b/conans/test/integration/package_id/package_id_modes_test.py
+index 16b01a1284b..7482f043a10 100644
+--- a/conans/test/integration/package_id/package_id_modes_test.py
++++ b/conans/test/integration/package_id/package_id_modes_test.py
+@@ -104,3 +104,30 @@ class Dep(ConanFile):
+         c.run("create dep --version=0.2")
+         c.run("create pkg")
+         c.assert_listed_binary({"pkg/0.1": ("56934f87c11792e356423e081c7cd490f3c1fbe0", "Build")})
++
++    def test_dep_python_require_defined(self):
++        c = TestClient()
++        dep = textwrap.dedent("""
++            from conan import ConanFile
++            class Dep(ConanFile):
++                name = "dep"
++                package_type = "python-require"
++                package_id_python_mode = "major_mode"
++            """)
++        c.save({"dep/conanfile.py": dep,
++                "pkg/conanfile.py": GenConanfile("pkg", "0.1").with_python_requires("dep/[*]")})
++        c.run("create dep --version=0.1")
++        c.run("create pkg")
++        c.assert_listed_binary({"pkg/0.1": ("fcf70699eb821f51cd4f3e228341ac4f405ad220", "Build")})
++
++        # using dep 0.2, still same, because dependency chose "minor"
++        c.run("create dep --version=0.1.1")
++        c.run("create pkg")
++        c.assert_listed_binary({"pkg/0.1": ("fcf70699eb821f51cd4f3e228341ac4f405ad220", "Build")})
++
++        # using dep 0.2, still same, because dependency chose "minor"
++        c.run("create dep --version=0.2")
++        c.run("create pkg")
++        c.assert_listed_binary({"pkg/0.1": ("56934f87c11792e356423e081c7cd490f3c1fbe0", "Build")})
++
++

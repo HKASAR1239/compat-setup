@@ -1,0 +1,39 @@
+diff --git a/tests/isolated/fork_in_main_thread.py b/tests/isolated/fork_in_main_thread.py
+index fb0f14d52..1b823ff27 100644
+--- a/tests/isolated/fork_in_main_thread.py
++++ b/tests/isolated/fork_in_main_thread.py
+@@ -5,7 +5,7 @@
+ import time
+ import threading
+ 
+-results = []
++results = set()
+ parent = True
+ 
+ def check_current():
+@@ -15,7 +15,7 @@ def check_current():
+ def background():
+     time.sleep(1)
+     check_current()
+-    results.append(True)
++    results.add("background")
+ 
+ def forker():
+     pid = os.fork()
+@@ -29,7 +29,7 @@ def forker():
+     else:
+         global parent
+         parent = False
+-    results.append(True)
++    results.add("forker")
+ 
+ t = threading.Thread(target=background)
+ t.start()
+@@ -37,6 +37,6 @@ def forker():
+ t.join()
+ 
+ check_current()
+-assert results == [True, True]
++assert results == {"background", "forker"}, results
+ if parent:
+     print("pass")

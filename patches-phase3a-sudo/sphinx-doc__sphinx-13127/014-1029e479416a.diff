@@ -1,0 +1,721 @@
+diff --git a/.github/workflows/builddoc.yml b/.github/workflows/builddoc.yml
+index e3347a7b535..f03a4ec3833 100644
+--- a/.github/workflows/builddoc.yml
++++ b/.github/workflows/builddoc.yml
+@@ -22,6 +22,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+diff --git a/.github/workflows/create-release.yml b/.github/workflows/create-release.yml
+index 4252d8f4338..adbbc5e03db 100644
+--- a/.github/workflows/create-release.yml
++++ b/.github/workflows/create-release.yml
+@@ -28,6 +28,8 @@ jobs:
+       id-token: write  # for PyPI trusted publishing
+     steps:
+       - uses: actions/checkout@v4
++        with:
++          persist-credentials: false
+       - name: Set up Python
+         uses: actions/setup-python@v5
+         with:
+@@ -62,11 +64,15 @@ jobs:
+           show-summary: "true"
+ 
+       - name: Convert attestations to PEP 740
+-        # workflow_ref example: sphinx-doc/sphinx/.github/workflows/create-release.yml@refs/heads/master
+         run: >
+           python utils/convert_attestations.py
+-          "${{ steps.attest.outputs.bundle-path }}"
+-          "https://github.com/${{ github.workflow_ref }}"
++          "$BUNDLE_PATH"
++          "$SIGNER_IDENTITY"
++        env:
++          BUNDLE_PATH: "${{ steps.attest.outputs.bundle-path }}"
++          # workflow_ref example: sphinx-doc/sphinx/.github/workflows/create-release.yml@refs/heads/master
++          # this forms the "signer identity" for the attestations
++          SIGNER_IDENTITY: "https://github.com/${{ github.workflow_ref }}"
+ 
+       - name: Inspect PEP 740 attestations
+         run: |
+@@ -75,8 +81,10 @@ jobs:
+       - name: Prepare attestation bundles for uploading
+         run: |
+           mkdir -p /tmp/attestation-bundles
+-          cp "${{ steps.attest.outputs.bundle-path }}" /tmp/attestation-bundles/
++          cp "$BUNDLE_PATH" /tmp/attestation-bundles/
+           cp dist/*.publish.attestation /tmp/attestation-bundles/
++        env:
++          BUNDLE_PATH: "${{ steps.attest.outputs.bundle-path }}"
+ 
+       - name: Upload attestation bundles
+         uses: actions/upload-artifact@v4
+@@ -97,7 +105,7 @@ jobs:
+               headers: {Authorization: `bearer ${oidc_request_token}`},
+             });
+             const oidc_token = (await oidc_resp.json()).value;
+-  
++
+             // exchange the OIDC token for an API token
+             const mint_resp = await fetch('https://pypi.org/_/oidc/github/mint-token', {
+               method: 'post',
+@@ -127,6 +135,8 @@ jobs:
+       contents: write  # for softprops/action-gh-release to create GitHub release
+     steps:
+       - uses: actions/checkout@v4
++        with:
++          persist-credentials: false
+       - name: Get release version
+         id: get_version
+         uses: actions/github-script@v7
+diff --git a/.github/workflows/lint.yml b/.github/workflows/lint.yml
+index 96a7ef718bd..f7503a5afce 100644
+--- a/.github/workflows/lint.yml
++++ b/.github/workflows/lint.yml
+@@ -24,6 +24,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Get Ruff version from pyproject.toml
+       run: |
+         RUFF_VERSION=$(awk -F'[="]' '/\[project\.optional-dependencies\]/ {p=1} /ruff/ {if (p) print $4}' pyproject.toml)
+@@ -48,6 +50,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+@@ -68,6 +72,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+@@ -88,6 +94,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+@@ -108,6 +116,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+@@ -128,6 +138,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+diff --git a/.github/workflows/lock.yml b/.github/workflows/lock.yml
+index d86f4b36282..e9d58e4896a 100644
+--- a/.github/workflows/lock.yml
++++ b/.github/workflows/lock.yml
+@@ -2,19 +2,57 @@ name: Lock old threads
+ 
+ on:
+   schedule:
++    # Run at midnight daily
+     - cron: "0 0 * * *"
+-
+-permissions:
+-  issues: write
+-  pull-requests: write
++  workflow_dispatch:
+ 
+ jobs:
+   action:
+-    if: github.repository_owner == 'sphinx-doc'
+     runs-on: ubuntu-latest
++    if: github.repository_owner == 'sphinx-doc'
++    permissions:
++      # to lock issues and PRs
++      issues: write
++      pull-requests: write
+     steps:
+-      - uses: dessant/lock-threads@v3
+-        with:
+-          github-token: ${{ github.token }}
+-          issue-inactive-days: "30"
+-          pr-inactive-days: "30"
++    - uses: actions/github-script@v7
++      with:
++        retries: 3
++        # language=JavaScript
++        script: |
++          const _FOUR_WEEKS_MILLISECONDS = 28 * 24 * 60 * 60 * 1000;
++          const _FOUR_WEEKS_DATE = new Date(Date.now() - _FOUR_WEEKS_MILLISECONDS);
++          const FOUR_WEEKS_AGO = `${_FOUR_WEEKS_DATE.toISOString().substring(0, 10)}T00:00:00Z`;
++          const OWNER = context.repo.owner;
++          const REPO = context.repo.repo;
++
++          try {
++            for (const thread_type of ["issue", "pr"]) {
++              core.debug(`Finding ${thread_type}s to lock`);
++              const query = thread_type === "issue"
++                ? `repo:${OWNER}/${REPO} updated:<${FOUR_WEEKS_AGO} is:closed is:unlocked is:issue`
++                : `repo:${OWNER}/${REPO} updated:<${FOUR_WEEKS_AGO} is:closed is:unlocked is:pr`;
++              core.debug(`Using query '${query}'`);
++              // https://octokit.github.io/rest.js/v21/#search-issues-and-pull-requests
++              const {data: {items: results}} = await github.rest.search.issuesAndPullRequests({
++                q: query,
++                order: "desc",
++                sort: "updated",
++                per_page: 100,
++              });
++              for (const item of results) {
++                if (item.locked) continue;
++                const thread_num = item.number;
++                core.debug(`Locking #${thread_num} (${thread_type})`);
++                // https://octokit.github.io/rest.js/v21/#issues-lock
++                await github.rest.issues.lock({
++                  owner: OWNER,
++                  repo: REPO,
++                  issue_number: thread_num,
++                  lock_reason: "resolved",
++                });
++              }
++            }
++          } catch (err) {
++            core.setFailed(err.message);
++          }
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index aa3a27753b2..c2591d82a58 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -47,6 +47,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python ${{ matrix.python }}
+       uses: actions/setup-python@v5
+       with:
+@@ -85,6 +87,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python ${{ matrix.python }} (deadsnakes)
+       uses: deadsnakes/action@v3.2.0
+       with:
+@@ -117,6 +121,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python ${{ matrix.python }} (deadsnakes)
+       uses: deadsnakes/action@v3.2.0
+       with:
+@@ -150,6 +156,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python ${{ matrix.python }} (deadsnakes)
+       uses: deadsnakes/action@v3.2.0
+       with:
+@@ -179,6 +187,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+@@ -211,6 +221,8 @@ jobs:
+         wget --no-verbose https://github.com/w3c/epubcheck/releases/download/v${EPUBCHECK_VERSION}/epubcheck-${EPUBCHECK_VERSION}.zip
+         unzip epubcheck-${EPUBCHECK_VERSION}.zip
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+@@ -243,6 +255,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+@@ -275,6 +289,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+@@ -303,6 +319,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+diff --git a/.github/workflows/nodejs.yml b/.github/workflows/nodejs.yml
+index 29359f90958..84727288fde 100644
+--- a/.github/workflows/nodejs.yml
++++ b/.github/workflows/nodejs.yml
+@@ -34,6 +34,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Use Node.js ${{ env.node-version }}
+       uses: actions/setup-node@v4
+       with:
+diff --git a/.github/workflows/transifex.yml b/.github/workflows/transifex.yml
+index 78e74efcf5a..f240d69a8a1 100644
+--- a/.github/workflows/transifex.yml
++++ b/.github/workflows/transifex.yml
+@@ -16,6 +16,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+@@ -45,6 +47,8 @@ jobs:
+ 
+     steps:
+     - uses: actions/checkout@v4
++      with:
++        persist-credentials: false
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+diff --git a/.ruff.toml b/.ruff.toml
+index e34aed8f70a..bb1503095de 100644
+--- a/.ruff.toml
++++ b/.ruff.toml
+@@ -54,6 +54,8 @@ ignore = [
+     "PLR6301",  # Method `{method_name}` could be a function, class method, or static method
+     # pylint ('PLW')
+     "PLW2901",  # Outer {outer_kind} variable `{name}` overwritten by inner {inner_kind} target
++    # flake8-pyi ('PYI')
++    "PYI025",  # Use `from collections.abc import Set as AbstractSet` to avoid confusion with the `set` builtin
+     # flake8-bandit ('S')
+     "S101",  # Use of `assert` detected
+     "S110",  # `try`-`except`-`pass` detected, consider logging the exception
+@@ -198,7 +200,7 @@ select = [
+     "PT",
+     # flake8-use-pathlib ('PTH')
+       # NOT YET USED
+-    # flake8-pyi ('PYI')
++    "PYI",
+       # Stub files are not used in Sphinx
+     # flake8-quotes ('Q')
+ #    "Q000",  # Double quotes found but single quotes preferred
+@@ -358,7 +360,7 @@ select = [
+ 
+ # these tests need old ``typing`` generic aliases
+ "tests/test_util/test_util_typing.py" = ["UP006", "UP007", "UP035"]
+-"tests/test_util/typing_test_data.py" = ["FA100", "UP006", "UP007", "UP035"]
++"tests/test_util/typing_test_data.py" = ["FA100", "PYI030", "UP006", "UP007", "UP035"]
+ 
+ "utils/*" = [
+     "T201",  # whitelist ``print`` for stdout messages
+diff --git a/doc/tutorial/deploying.rst b/doc/tutorial/deploying.rst
+index c950d37afc5..1873d6783f2 100644
+--- a/doc/tutorial/deploying.rst
++++ b/doc/tutorial/deploying.rst
+@@ -188,6 +188,8 @@ contents:
+          contents: write
+        steps:
+        - uses: actions/checkout@v4
++         with:
++           persist-credentials: false
+        - name: Build HTML
+          uses: ammaraskar/sphinx-action@master
+        - name: Upload artifacts
+diff --git a/pyproject.toml b/pyproject.toml
+index e3abc9d218d..11ed6a00b9d 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -82,7 +82,7 @@ docs = [
+ ]
+ lint = [
+     "flake8>=6.0",
+-    "ruff==0.7.2",
++    "ruff==0.7.3",
+     "mypy==1.13.0",
+     "sphinx-lint>=0.9",
+     "types-colorama==0.4.15.20240311",
+@@ -92,7 +92,7 @@ lint = [
+     "types-Pygments==2.18.0.20240506",
+     "types-requests==2.32.0.20241016",  # align with requests
+     "types-urllib3==1.26.25.14",
+-    "pyright==1.1.388",
++    "pyright==1.1.389",
+     "pytest>=6.0",
+ ]
+ test = [
+diff --git a/sphinx/builders/xml.py b/sphinx/builders/xml.py
+index 173f1ee5c53..0cb2dfae764 100644
+--- a/sphinx/builders/xml.py
++++ b/sphinx/builders/xml.py
+@@ -40,7 +40,7 @@ class XMLBuilder(Builder):
+     out_suffix = '.xml'
+     allow_parallel = True
+ 
+-    _writer_class: type[XMLWriter] | type[PseudoXMLWriter] = XMLWriter
++    _writer_class: type[XMLWriter | PseudoXMLWriter] = XMLWriter
+     writer: XMLWriter | PseudoXMLWriter
+     default_translator_class = XMLTranslator
+ 
+diff --git a/sphinx/pycode/parser.py b/sphinx/pycode/parser.py
+index 6b04c6f0e21..26ecb913a50 100644
+--- a/sphinx/pycode/parser.py
++++ b/sphinx/pycode/parser.py
+@@ -111,7 +111,7 @@ def __init__(
+         self.end = end
+         self.source = source
+ 
+-    def __eq__(self, other: Any) -> bool:
++    def __eq__(self, other: object) -> bool:
+         if isinstance(other, int):
+             return self.kind == other
+         elif isinstance(other, str):
+diff --git a/sphinx/search/en.py b/sphinx/search/en.py
+index 11ebb683836..5173dc03fc0 100644
+--- a/sphinx/search/en.py
++++ b/sphinx/search/en.py
+@@ -6,19 +6,17 @@
+ 
+ from sphinx.search import SearchLanguage
+ 
+-english_stopwords = set(
+-    """
+-a  and  are  as  at
+-be  but  by
+-for
+-if  in  into  is  it
+-near  no  not
+-of  on  or
+-such
+-that  the  their  then  there  these  they  this  to
+-was  will  with
+-""".split()
+-)
++english_stopwords = {
++    'a', 'and', 'are', 'as', 'at',
++    'be', 'but', 'by',
++    'for',
++    'if', 'in', 'into', 'is', 'it',
++    'near', 'no', 'not',
++    'of', 'on', 'or',
++    'such',
++    'that', 'the', 'their', 'then', 'there', 'these', 'they', 'this', 'to',
++    'was', 'will', 'with',
++}  # fmt: skip
+ 
+ js_porter_stemmer = """
+ /**
+diff --git a/sphinx/search/zh.py b/sphinx/search/zh.py
+index 28251e8c1db..342b566512a 100644
+--- a/sphinx/search/zh.py
++++ b/sphinx/search/zh.py
+@@ -18,19 +18,17 @@
+     JIEBA = False
+     JIEBA_DEFAULT_DICT = Path()
+ 
+-english_stopwords = set(
+-    """
+-a  and  are  as  at
+-be  but  by
+-for
+-if  in  into  is  it
+-near  no  not
+-of  on  or
+-such
+-that  the  their  then  there  these  they  this  to
+-was  will  with
+-""".split()
+-)
++english_stopwords = {
++    'a', 'and', 'are', 'as', 'at',
++    'be', 'but', 'by',
++    'for',
++    'if', 'in', 'into', 'is', 'it',
++    'near', 'no', 'not',
++    'of', 'on', 'or',
++    'such',
++    'that', 'the', 'their', 'then', 'there', 'these', 'they', 'this', 'to',
++    'was', 'will', 'with',
++}  # fmt: skip
+ 
+ js_porter_stemmer = """
+ /**
+diff --git a/sphinx/testing/fixtures.py b/sphinx/testing/fixtures.py
+index 6f1c29cdba2..2bf7a76594f 100644
+--- a/sphinx/testing/fixtures.py
++++ b/sphinx/testing/fixtures.py
+@@ -114,7 +114,7 @@ def app_params(
+     return _app_params(args, kwargs)
+ 
+ 
+-_app_params = namedtuple('_app_params', 'args,kwargs')
++_app_params = namedtuple('_app_params', 'args,kwargs')  # NoQA: PYI024
+ 
+ 
+ @pytest.fixture
+diff --git a/sphinx/testing/path.py b/sphinx/testing/path.py
+index b469588ea6d..3419ccbc893 100644
+--- a/sphinx/testing/path.py
++++ b/sphinx/testing/path.py
+@@ -32,7 +32,7 @@ def getumask() -> int:
+ UMASK = getumask()
+ 
+ 
+-class path(str):
++class path(str):  # NoQA: FURB189
+     """
+     Represents a path which behaves like a string.
+     """
+diff --git a/sphinx/util/docutils.py b/sphinx/util/docutils.py
+index 30c87595f31..87823bd69fd 100644
+--- a/sphinx/util/docutils.py
++++ b/sphinx/util/docutils.py
+@@ -30,7 +30,7 @@
+ 
+ if TYPE_CHECKING:
+     from collections.abc import Callable, Iterator  # NoQA: TCH003
+-    from types import ModuleType
++    from types import ModuleType, TracebackType
+ 
+     from docutils.frontend import Values
+     from docutils.nodes import Element, Node, system_message
+@@ -212,7 +212,10 @@ def __enter__(self) -> None:
+         self.enable()
+ 
+     def __exit__(
+-        self, exc_type: type[Exception], exc_value: Exception, traceback: Any
++        self,
++        exc_type: type[BaseException] | None,
++        exc_value: BaseException | None,
++        traceback: TracebackType | None,
+     ) -> None:
+         self.disable()
+ 
+diff --git a/sphinx/util/inspect.py b/sphinx/util/inspect.py
+index c925485e11a..b25d5f06aeb 100644
+--- a/sphinx/util/inspect.py
++++ b/sphinx/util/inspect.py
+@@ -32,15 +32,15 @@
+     from typing_extensions import TypeIs
+ 
+     class _SupportsGet(Protocol):
+-        def __get__(self, __instance: Any, __owner: type | None = ...) -> Any: ...  # NoQA: E704
++        def __get__(self, instance: Any, owner: type | None = ..., /) -> Any: ...  # NoQA: E704
+ 
+     class _SupportsSet(Protocol):
+         # instance and value are contravariants but we do not need that precision
+-        def __set__(self, __instance: Any, __value: Any) -> None: ...  # NoQA: E704
++        def __set__(self, instance: Any, value: Any, /) -> None: ...  # NoQA: E704
+ 
+     class _SupportsDelete(Protocol):
+         # instance is contravariant but we do not need that precision
+-        def __delete__(self, __instance: Any) -> None: ...  # NoQA: E704
++        def __delete__(self, instance: Any, /) -> None: ...  # NoQA: E704
+ 
+     _RoutineType: TypeAlias = (
+         types.FunctionType
+@@ -543,7 +543,7 @@ def __call__(self) -> None:
+         # Dummy method to imitate special typing classes
+         pass
+ 
+-    def __eq__(self, other: Any) -> bool:
++    def __eq__(self, other: object) -> bool:
+         return self.name == other
+ 
+     def __hash__(self) -> int:
+diff --git a/sphinx/util/osutil.py b/sphinx/util/osutil.py
+index 779727b394b..c3f5aaa139a 100644
+--- a/sphinx/util/osutil.py
++++ b/sphinx/util/osutil.py
+@@ -17,7 +17,8 @@
+ from sphinx.locale import __
+ 
+ if TYPE_CHECKING:
+-    from typing import Any
++    from types import TracebackType
++    from typing import Any, Self
+ 
+ # SEP separates path elements in the canonical file names
+ #
+@@ -234,11 +235,14 @@ def close(self) -> None:
+         with open(self._path, 'w', encoding='utf-8') as f:
+             f.write(buf)
+ 
+-    def __enter__(self) -> FileAvoidWrite:
++    def __enter__(self) -> Self:
+         return self
+ 
+     def __exit__(
+-        self, exc_type: type[Exception], exc_value: Exception, traceback: Any
++        self,
++        exc_type: type[BaseException] | None,
++        exc_value: BaseException | None,
++        traceback: TracebackType | None,
+     ) -> bool:
+         self.close()
+         return True
+diff --git a/sphinx/util/typing.py b/sphinx/util/typing.py
+index 2e8d9e689f7..3bac26e30ec 100644
+--- a/sphinx/util/typing.py
++++ b/sphinx/util/typing.py
+@@ -126,7 +126,7 @@ def __call__(  # NoQA: E704
+ 
+     _T_co = TypeVar('_T_co', str, bytes, covariant=True)
+ 
+-    class _ReadableStream(Protocol[_T_co]):
++    class _ReadableStream(Protocol[_T_co]):  # NoQA: PYI046 (false positive)
+         def read(self, size: int = ...) -> _T_co: ...  # NoQA: E704
+ 
+         def __enter__(self) -> Self: ...  # NoQA: E704
+@@ -170,7 +170,7 @@ class ExtensionMetadata(TypedDict, total=False):
+ 
+ 
+ if TYPE_CHECKING:
+-    _ExtensionSetupFunc: TypeAlias = Callable[[Sphinx], ExtensionMetadata]
++    _ExtensionSetupFunc: TypeAlias = Callable[[Sphinx], ExtensionMetadata]  # NoQA: PYI047 (false positive)
+ 
+ 
+ def get_type_hints(
+diff --git a/tests/test_extensions/test_ext_apidoc.py b/tests/test_extensions/test_ext_apidoc.py
+index 7e4edbdfce8..515aff9e930 100644
+--- a/tests/test_extensions/test_ext_apidoc.py
++++ b/tests/test_extensions/test_ext_apidoc.py
+@@ -8,6 +8,8 @@
+ import sphinx.ext.apidoc
+ from sphinx.ext.apidoc import main as apidoc_main
+ 
++_apidoc = namedtuple('_apidoc', 'coderoot,outdir')  # NoQA: PYI024
++
+ 
+ @pytest.fixture
+ def apidoc(rootdir, tmp_path, apidoc_params):
+@@ -24,7 +26,7 @@ def apidoc(rootdir, tmp_path, apidoc_params):
+         *kwargs.get('options', []),
+     ]
+     apidoc_main(args)
+-    return namedtuple('apidoc', 'coderoot,outdir')(coderoot, outdir)
++    return _apidoc(coderoot, outdir)
+ 
+ 
+ @pytest.fixture
+diff --git a/tests/test_extensions/test_ext_autodoc.py b/tests/test_extensions/test_ext_autodoc.py
+index dbe0fbe1d71..eb775aba081 100644
+--- a/tests/test_extensions/test_ext_autodoc.py
++++ b/tests/test_extensions/test_ext_autodoc.py
+@@ -216,7 +216,7 @@ class GMeta(FMeta):
+         assert formatsig('class', 'C', C, None, None) == '(a, b=None)'
+     assert formatsig('class', 'C', D, 'a, b', 'X') == '(a, b) -> X'
+ 
+-    class ListSubclass(list):
++    class ListSubclass(list):  # NoQA: FURB189
+         pass
+ 
+     # only supported if the python implementation decides to document it
+@@ -1527,7 +1527,7 @@ def _node(
+         tab = ' ' * 3
+ 
+         def rst_option(name: str, value: Any) -> str:
+-            value = '' if value in {1, True} else value
++            value = '' if value == 1 else value  # note True == 1.
+             return f'{prefix}{tab}:{name}: {value!s}'.rstrip()
+ 
+         lines = [
+diff --git a/tests/test_extensions/test_ext_intersphinx.py b/tests/test_extensions/test_ext_intersphinx.py
+index ffc99032695..5aaa91d9365 100644
+--- a/tests/test_extensions/test_ext_intersphinx.py
++++ b/tests/test_extensions/test_ext_intersphinx.py
+@@ -41,7 +41,7 @@
+     from typing import NoReturn
+ 
+ 
+-class FakeList(list):
++class FakeList(list):  # NoQA: FURB189
+     def __iter__(self) -> NoReturn:
+         raise NotImplementedError
+ 
+diff --git a/tests/test_extensions/test_ext_napoleon.py b/tests/test_extensions/test_ext_napoleon.py
+index a14cb55dda2..306ab057b0d 100644
+--- a/tests/test_extensions/test_ext_napoleon.py
++++ b/tests/test_extensions/test_ext_napoleon.py
+@@ -77,7 +77,7 @@ def __special_undoc__(self):  # NoQA: PLW3201
+         pass
+ 
+ 
+-SampleNamedTuple = namedtuple('SampleNamedTuple', 'user_id block_type def_id')
++SampleNamedTuple = namedtuple('SampleNamedTuple', 'user_id block_type def_id')  # NoQA: PYI024
+ 
+ 
+ class TestProcessDocstring:
+diff --git a/tests/test_extensions/test_ext_napoleon_docstring.py b/tests/test_extensions/test_ext_napoleon_docstring.py
+index f47f2ef7dbb..1e0cf3ae023 100644
+--- a/tests/test_extensions/test_ext_napoleon_docstring.py
++++ b/tests/test_extensions/test_ext_napoleon_docstring.py
+@@ -26,7 +26,7 @@
+ from tests.test_extensions.ext_napoleon_pep526_data_numpy import PEP526NumpyClass
+ 
+ 
+-class NamedtupleSubclass(namedtuple('NamedtupleSubclass', ('attr1', 'attr2'))):
++class NamedtupleSubclass(namedtuple('NamedtupleSubclass', ('attr1', 'attr2'))):  # NoQA: PYI024
+     """Sample namedtuple subclass
+ 
+     Attributes
+diff --git a/tests/test_util/test_util_console.py b/tests/test_util/test_util_console.py
+index fb48e189f30..d9140a6b9c2 100644
+--- a/tests/test_util/test_util_console.py
++++ b/tests/test_util/test_util_console.py
+@@ -10,9 +10,7 @@
+ 
+ if TYPE_CHECKING:
+     from collections.abc import Callable, Sequence
+-    from typing import Final, TypeVar
+-
+-    _T = TypeVar('_T')
++    from typing import Final
+ 
+ CURSOR_UP: Final[str] = '\x1b[2A'  # ignored ANSI code
+ ERASE_LINE: Final[str] = '\x1b[2K'  # supported ANSI code

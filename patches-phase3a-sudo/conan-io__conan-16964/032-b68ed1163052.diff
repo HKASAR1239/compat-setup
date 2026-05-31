@@ -1,0 +1,156 @@
+diff --git a/conan/internal/api/profile/profile_loader.py b/conan/internal/api/profile/profile_loader.py
+index 0ab7b0d822b..6e9ad786bd6 100644
+--- a/conan/internal/api/profile/profile_loader.py
++++ b/conan/internal/api/profile/profile_loader.py
+@@ -43,71 +43,35 @@ def profile_plugin(profile):
+ 
+ 
+ def _check_correct_cppstd(settings):
+-    from conan.tools.scm import Version
+-    def _error(compiler, cppstd, min_version, version):
+-        from conan.errors import ConanException
+-        raise ConanException(f"The provided compiler.cppstd={cppstd} requires at least {compiler}"
+-                             f">={min_version} but version {version} provided")
+     cppstd = settings.get("compiler.cppstd")
+     version = settings.get("compiler.version")
+ 
+     if cppstd and version:
+-        cppstd = cppstd.replace("gnu", "")
+-        version = Version(version)
+-        mver = None
+         compiler = settings.get("compiler")
+-        if compiler == "gcc":
+-            mver = {"20": "8",
+-                    "17": "5",
+-                    "14": "4.8",
+-                    "11": "4.3"}.get(cppstd)
+-        elif compiler == "clang":
+-            mver = {"20": "6",
+-                    "17": "3.5",
+-                    "14": "3.4",
+-                    "11": "2.1"}.get(cppstd)
+-        elif compiler == "apple-clang":
+-            mver = {"20": "10",
+-                    "17": "6.1",
+-                    "14": "5.1",
+-                    "11": "4.5"}.get(cppstd)
+-        elif compiler == "msvc":
+-            mver = {"23": "193",
+-                    "20": "192",
+-                    "17": "191",
+-                    "14": "190"}.get(cppstd)
+-        if mver and version < mver:
+-            _error(compiler, cppstd, mver, version)
++        from conan.tools.build.cppstd import supported_cppstd
++        supported = supported_cppstd(None, compiler, version)
++        # supported is None when we don't have information about the compiler
++        # but an empty list when no flags are supported for this version
++        if supported is not None and cppstd not in supported:
++            from conan.errors import ConanException
++            raise ConanException(f"The provided compiler.cppstd={cppstd} is not supported by {compiler} {version}. "
++                                 f"Supported values are: {supported}")
+ 
+ 
+ def _check_correct_cstd(settings):
+-    from conan.tools.scm import Version
+-    def _error(compiler, cstd, min_version, version):
+-        from conan.errors import ConanException
+-        raise ConanException(f"The provided compiler.cstd={cstd} requires at least {compiler}"
+-                             f">={min_version} but version {version} provided")
+     cstd = settings.get("compiler.cstd")
+     version = settings.get("compiler.version")
+ 
+     if cstd and version:
+-        cstd = cstd.replace("gnu", "")
+-        version = Version(version)
+-        mver = None
+         compiler = settings.get("compiler")
+-        if compiler == "gcc":
+-            # TODO: right versions
+-            mver = {}.get(cstd)
+-        elif compiler == "clang":
+-            # TODO: right versions
+-            mver = {}.get(cstd)
+-        elif compiler == "apple-clang":
+-            # TODO: Right versions
+-            mver = {}.get(cstd)
+-        elif compiler == "msvc":
+-            mver = {"17": "192",
+-                    "11": "192"}.get(cstd)
+-        if mver and version < mver:
+-            _error(compiler, cstd, mver, version)
++        from conan.tools.build.cstd import supported_cstd
++        supported = supported_cstd(None, compiler, version)
++        # supported is None when we don't have information about the compiler
++        # but an empty list when no flags are supported for this version
++        if supported is not None and cstd not in supported:
++            from conan.errors import ConanException
++            raise ConanException(f"The provided compiler.cstd={cstd} is not supported by {compiler} {version}. "
++                                 f"Supported values are: {supported}")
+ """
+ 
+ 
+diff --git a/test/functional/toolchains/cmake/test_cmake_toolchain.py b/test/functional/toolchains/cmake/test_cmake_toolchain.py
+index 5be9ffa6fcf..f8592601199 100644
+--- a/test/functional/toolchains/cmake/test_cmake_toolchain.py
++++ b/test/functional/toolchains/cmake/test_cmake_toolchain.py
+@@ -2152,7 +2152,7 @@ def build(self):
+     if platform.system() == "Windows":
+         # compiler.version=191 is already the default now
+         client.run("build . -s compiler.cstd=11 -s compiler.version=191", assert_error=True)
+-        assert "The provided compiler.cstd=11 requires at least msvc>=192 but version 191 provided" \
++        assert "The provided compiler.cstd=11 is not supported by msvc 191. Supported values are: []" \
+                in client.out
+     else:
+         client.run("build . -s compiler.cppstd=11")
+diff --git a/test/integration/extensions/test_plugin_cmd_wrapper.py b/test/integration/extensions/test_plugin_cmd_wrapper.py
+index bd2c1dd16bc..d3f92031798 100644
+--- a/test/integration/extensions/test_plugin_cmd_wrapper.py
++++ b/test/integration/extensions/test_plugin_cmd_wrapper.py
+@@ -54,11 +54,20 @@ def test_plugin_profile_error_vs():
+     c.save({"conanfile.py": GenConanfile("pkg", "1.0")})
+     c.run("create . -s compiler=msvc -s compiler.version=15 -s compiler.cppstd=14",
+           assert_error=True)
+-    assert "The provided compiler.cppstd=14 requires at least " \
+-           "msvc>=190 but version 15 provided" in c.out
++    assert "The provided compiler.cppstd=14 is not supported by msvc 15. Supported values are: []" in c.out
+     c.run("create . -s compiler=msvc -s compiler.version=170 -s compiler.cppstd=14",
+           assert_error=True)
+-    assert "The provided compiler.cppstd=14 requires at least " \
+-           "msvc>=190 but version 170 provided" in c.out
++    assert "The provided compiler.cppstd=14 is not supported by msvc 170. Supported values are: []" in c.out
+     c.run("create . -s compiler=msvc -s compiler.version=190 -s compiler.cppstd=14")
+     assert "Installing packages" in c.out
++
++
++def test_plugin_profile_error_vscstd():
++    c = TestClient()
++    c.save({"conanfile.py": GenConanfile("pkg", "1.0").with_class_attribute("languages = 'C'")})
++    c.run("create . -s compiler=msvc -s compiler.version=190 -s compiler.cstd=23", assert_error=True)
++    assert "The provided compiler.cstd=23 is not supported by msvc 190. Supported values are: []" in c.out
++    c.run("create . -s compiler=msvc -s compiler.version=193 -s compiler.cstd=23", assert_error=True)
++    assert "The provided compiler.cstd=23 is not supported by msvc 193. Supported values are: ['11', '17']" in c.out
++    c.run("create . -s compiler=msvc -s compiler.version=193 -s compiler.cstd=17")
++    assert "Installing packages" in c.out
+diff --git a/test/integration/package_id/test_cache_compatibles.py b/test/integration/package_id/test_cache_compatibles.py
+index 077e25203e3..751a4c50fba 100644
+--- a/test/integration/package_id/test_cache_compatibles.py
++++ b/test/integration/package_id/test_cache_compatibles.py
+@@ -316,7 +316,7 @@ def package_info(self):
+         assert "pkg/0.1: CPPSTD: 17" in c.out
+ 
+     def test_check_min_cstd(self):
+-        """ test that the check_min_cstd works fine wiht compatibility
++        """ test that the check_min_cstd works fine with compatibility
+         """
+         conanfile = textwrap.dedent("""
+             from conan import ConanFile
+@@ -335,7 +335,7 @@ def package_info(self):
+ 
+         c = TestClient()
+         c.save({"conanfile.py": conanfile})
+-        settings = "-s compiler=gcc -s compiler.version=9 -s compiler.libcxx=libstdc++11"
++        settings = "-s compiler=gcc -s compiler.version=14 -s compiler.libcxx=libstdc++11"
+         c.run(f"create .  {settings} -s compiler.cstd=17")
+         assert "pkg/0.1: valid standard!!" in c.out
+         assert "pkg/0.1: CSTD: 17" in c.out

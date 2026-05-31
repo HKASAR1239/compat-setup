@@ -1,0 +1,377 @@
+diff --git a/conan/tools/google/bazel.py b/conan/tools/google/bazel.py
+index e0a8cbb4d9d..55702d2db26 100644
+--- a/conan/tools/google/bazel.py
++++ b/conan/tools/google/bazel.py
+@@ -11,6 +11,10 @@ def __init__(self, conanfile):
+         :param conanfile: ``< ConanFile object >`` The current recipe object. Always use ``self``.
+         """
+         self._conanfile = conanfile
++        # Use BazelToolchain generated file if exists
++        self._conan_bazelrc = os.path.join(self._conanfile.generators_folder, BazelToolchain.bazelrc_name)
++        self._use_conan_config = os.path.exists(self._conan_bazelrc)
++        self._startup_opts = self._get_startup_command_options()
+ 
+     def _safe_run_command(self, command):
+         """
+@@ -22,7 +26,18 @@ def _safe_run_command(self, command):
+             self._conanfile.run(command)
+         finally:
+             if platform.system() == "Windows":
+-                self._conanfile.run("bazel shutdown")
++                self._conanfile.run("bazel" + self._startup_opts + " shutdown")
++
++    def _get_startup_command_options(self):
++        bazelrc_paths = []
++        if self._use_conan_config:
++            bazelrc_paths.append(self._conan_bazelrc)
++        # User bazelrc paths have more prio than Conan one
++        # See more info in https://bazel.build/run/bazelrc
++        bazelrc_paths.extend(self._conanfile.conf.get("tools.google.bazel:bazelrc_path", default=[],
++                                                      check_type=list))
++        opts = " ".join(["--bazelrc=" + rc.replace("\\", "/") for rc in bazelrc_paths])
++        return f" {opts}" if opts else ""
+ 
+     def build(self, args=None, target="//...", clean=True):
+         """
+@@ -41,34 +56,21 @@ def build(self, args=None, target="//...", clean=True):
+         :param clean: boolean that indicates to run a "bazel clean" before running the "bazel build".
+                       Notice that this is important to ensure a fresh bazel cache every
+         """
+-        # Use BazelToolchain generated file if exists
+-        conan_bazelrc = os.path.join(self._conanfile.generators_folder, BazelToolchain.bazelrc_name)
+-        use_conan_config = os.path.exists(conan_bazelrc)
+-        bazelrc_paths = []
+-        bazelrc_configs = []
+-        if use_conan_config:
+-            bazelrc_paths.append(conan_bazelrc)
+-            bazelrc_configs.append(BazelToolchain.bazelrc_config)
+-        # User bazelrc paths have more prio than Conan one
+-        # See more info in https://bazel.build/run/bazelrc
+-        bazelrc_paths.extend(self._conanfile.conf.get("tools.google.bazel:bazelrc_path", default=[],
+-                                                      check_type=list))
+         # Note: In case of error like this: ... https://bcr.bazel.build/: PKIX path building failed
+         # Check this comment: https://github.com/bazelbuild/bazel/issues/3915#issuecomment-1120894057
+-        command = "bazel"
+-        for rc in bazelrc_paths:
+-            rc = rc.replace("\\", "/")
+-            command += f" --bazelrc={rc}"
+-        command += " build"
+-        bazelrc_configs.extend(self._conanfile.conf.get("tools.google.bazel:configs", default=[],
++        bazelrc_build_configs = []
++        if self._use_conan_config:
++            bazelrc_build_configs.append(BazelToolchain.bazelrc_config)
++        command = "bazel" + self._startup_opts + " build"
++        bazelrc_build_configs.extend(self._conanfile.conf.get("tools.google.bazel:configs", default=[],
+                                                         check_type=list))
+-        for config in bazelrc_configs:
++        for config in bazelrc_build_configs:
+             command += f" --config={config}"
+         if args:
+             command += " ".join(f" {arg}" for arg in args)
+         command += f" {target}"
+         if clean:
+-            self._safe_run_command("bazel clean")
++            self._safe_run_command("bazel" + self._startup_opts + " clean")
+         self._safe_run_command(command)
+ 
+     def test(self, target=None):
+@@ -77,4 +79,4 @@ def test(self, target=None):
+         """
+         if self._conanfile.conf.get("tools.build:skip_test", check_type=bool) or target is None:
+             return
+-        self._safe_run_command(f'bazel test {target}')
++        self._safe_run_command("bazel" + self._startup_opts + f" test {target}")
+diff --git a/conan/tools/google/bazeldeps.py b/conan/tools/google/bazeldeps.py
+index 44a948a61b1..3aac16e3149 100644
+--- a/conan/tools/google/bazeldeps.py
++++ b/conan/tools/google/bazeldeps.py
+@@ -72,13 +72,12 @@ def _get_requirements(conanfile, build_context_activated):
+         yield require, dep
+ 
+ 
+-def _get_libs(dep, cpp_info=None, reference_name=None) -> list:
++def _get_libs(dep, cpp_info=None) -> list:
+     """
+     Get the static/shared library paths
+ 
+     :param dep: normally a <ConanFileInterface obj>
+     :param cpp_info: <CppInfo obj> of the component.
+-    :param reference_name: <str> Package/Component's reference name. ``None`` by default.
+     :return: list of tuples per static/shared library ->
+              [(name, is_shared, lib_path, import_lib_path)]
+              Note: ``library_path`` could be both static and shared ones in case of UNIX systems.
+@@ -119,7 +118,7 @@ def _save_lib_path(file_name, file_path):
+                 shared_windows_libs[libs[0]] = formatted_path
+             else:  # let's cross the fingers... This is the last chance.
+                 for lib in libs:
+-                    if ref_name in name and ref_name in lib and lib not in shared_windows_libs:
++                    if lib in name and lib not in shared_windows_libs:
+                         shared_windows_libs[lib] = formatted_path
+                         break
+         elif lib_name is not None:
+@@ -132,7 +131,6 @@ def _save_lib_path(file_name, file_path):
+     is_shared = _is_shared()
+     libdirs = cpp_info.libdirs
+     bindirs = cpp_info.bindirs if is_shared else []  # just want to get shared libraries
+-    ref_name = reference_name or dep.ref.name
+     if hasattr(cpp_info, "aggregated_components"):
+         # Global cpp_info
+         total_libs_number = len(cpp_info.aggregated_components().libs)
+diff --git a/conan/tools/meson/meson.py b/conan/tools/meson/meson.py
+index 1f99ade0efc..17fa5924100 100644
+--- a/conan/tools/meson/meson.py
++++ b/conan/tools/meson/meson.py
+@@ -46,8 +46,7 @@ def configure(self, reconfigure=False):
+             else:  # extra native file for cross-building scenarios
+                 cmd += f' --native-file "{native}"'
+         cmd += ' "{}" "{}"'.format(build_folder, source_folder)
+-        # Issue related: https://github.com/mesonbuild/meson/issues/12880
+-        cmd += ' --prefix=/'  # this must be an absolute path, otherwise, meson complains
++        cmd += f" --prefix={self._prefix}"
+         self._conanfile.output.info("Meson configure cmd: {}".format(cmd))
+         self._conanfile.run(cmd)
+ 
+@@ -112,3 +111,30 @@ def _install_verbosity(self):
+         # so it's a bit backwards
+         verbosity = self._conanfile.conf.get("tools.build:verbosity", choices=("quiet", "verbose"))
+         return "--quiet" if verbosity else ""
++
++    @property
++    def _prefix(self):
++        """Generate a valid ``--prefix`` argument value for meson.
++        For conan, the prefix must be similar to the Unix root directory ``/``.
++
++        The result of this function should be passed to
++        ``meson setup --prefix={self._prefix} ...``
++
++        Python 3.13 changed the semantics of ``/`` on the Windows ntpath module,
++        it is now special-cased as a relative directory.
++        Thus, ``os.path.isabs("/")`` is true on Linux but false on Windows.
++        So for Windows, an equivalent path is ``C:\\``. However, this can be
++        parsed wrongly in meson in specific circumstances due to the trailing
++        backslash. Hence, we also use forward slashes for Windows, leaving us
++        with ``C:/`` or similar paths.
++
++        See also
++        --------
++        * The meson issue discussing the need to set ``--prefix`` to ``/``:
++            `mesonbuild/meson#12880 <https://github.com/mesonbuild/meson/issues/12880>`_
++        * The cpython PR introducing the ``/`` behavior change:
++            `python/cpython#113829 <https://github.com/python/cpython/pull/113829>`_
++        * The issue detailing the erroneous parsing of ``\\``:
++            `conan-io/conan#14213 <https://github.com/conan-io/conan/issues/14213>`_
++        """
++        return os.path.abspath("/").replace("\\", "/")
+diff --git a/conans/model/pkg_type.py b/conans/model/pkg_type.py
+index 29c207952c5..d850d03d4ba 100644
+--- a/conans/model/pkg_type.py
++++ b/conans/model/pkg_type.py
+@@ -58,6 +58,11 @@ def deduce_from_options():
+                 if conanfile_type is PackageType.UNKNOWN:
+                     raise ConanException(f"{conanfile}: Package type is 'library',"
+                                          " but no 'shared' option declared")
++            elif any(option in conanfile.options for option in ["shared", "header_only"]):
++                conanfile.output.warning(f"{conanfile}: package_type '{conanfile_type}' is defined, "
++                                         "but 'shared' and/or 'header_only' options are present. "
++                                         "The package_type will have precedence over the options "
++                                         "regardless of their value.")
+             conanfile.package_type = conanfile_type
+         else:  # automatic default detection with option shared/header-only
+             conanfile.package_type = deduce_from_options()
+diff --git a/test/integration/graph/core/test_auto_package_type.py b/test/integration/graph/core/test_auto_package_type.py
+index 01db28fe8fd..9e12c11ccfa 100644
+--- a/test/integration/graph/core/test_auto_package_type.py
++++ b/test/integration/graph/core/test_auto_package_type.py
+@@ -1,3 +1,5 @@
++import textwrap
++
+ import pytest
+ 
+ from conan.test.utils.tools import TestClient
+@@ -36,6 +38,7 @@ def test_auto_package_type(conanfile):
+     c.run("graph info . --filter package_type")
+     assert "package_type: static-library" in c.out
+     c.run("graph info . --filter package_type -o shared=True")
++    assert "The package_type will have precedence over the options" not in c.out
+     assert "package_type: shared-library" in c.out
+     c.run("graph info . --filter package_type -o shared=True -o header_only=False")
+     assert "package_type: shared-library" in c.out
+@@ -43,3 +46,21 @@ def test_auto_package_type(conanfile):
+     assert "package_type: header-library" in c.out
+     c.run("graph info . --filter package_type -o header_only=True -o shared=False")
+     assert "package_type: header-library" in c.out
++
++def test_package_type_and_header_library():
++    """ Show that forcing a package_type and header_only=True does not change the package_type"""
++    tc = TestClient(light=True)
++    tc.save({"conanfile.py": textwrap.dedent("""
++    from conan import ConanFile
++
++    class Pkg(ConanFile):
++        package_type = "static-library"
++        options = {"header_only": [True, False]}
++
++    """)})
++    tc.run("graph info . --filter package_type -o &:header_only=False")
++    assert "package_type: static-library" in tc.out
++    assert "The package_type will have precedence over the options" in tc.out
++    tc.run("graph info . --filter package_type -o &:header_only=True")
++    assert "package_type: static-library" in tc.out
++    assert "The package_type will have precedence over the options" in tc.out
+diff --git a/test/integration/py_requires/python_requires_test.py b/test/integration/py_requires/python_requires_test.py
+index 007ed086dfb..ac032298a42 100644
+--- a/test/integration/py_requires/python_requires_test.py
++++ b/test/integration/py_requires/python_requires_test.py
+@@ -832,6 +832,49 @@ def generate(self):
+         assert "OptionBASE: True" in c.out
+         assert "OptionDERIVED: False" in c.out
+ 
++    def test_options_default_update(self):
++        c = TestClient(light=True)
++        base = textwrap.dedent("""
++            from conan import ConanFile
++            class BaseConan:
++                options = {"base": [True, False]}
++                default_options = {"base": True}
++
++            class PyReq(ConanFile):
++                name = "base"
++                version = "1.0.0"
++                package_type = "python-require"
++                """)
++        derived = textwrap.dedent("""
++            import conan
++
++            class DerivedConan(conan.ConanFile):
++                name = "derived"
++                python_requires = "base/1.0.0"
++                python_requires_extend = "base.BaseConan"
++                options = {"derived": [True, False]}
++                default_options = {"derived": False}
++
++                def init(self):
++                    base = self.python_requires["base"].module.BaseConan
++                    self.options.update(base.options, base.default_options)
++                    self.options.base = False
++
++                def generate(self):
++                    self.output.info(f"OptionBASE: {self.options.base}")
++                    self.output.info(f"OptionDERIVED: {self.options.derived}")
++            """)
++        c.save({"base/conanfile.py": base,
++                "derived/conanfile.py": derived})
++        c.run("create base")
++        c.run("install derived")
++        assert "OptionBASE: False" in c.out
++        assert "OptionDERIVED: False" in c.out
++
++        c.run("install derived -o=&:base=True")
++        assert "OptionBASE: True" in c.out
++        assert "OptionDERIVED: False" in c.out
++
+ 
+ def test_transitive_python_requires():
+     # https://github.com/conan-io/conan/issues/8546
+diff --git a/test/integration/toolchains/google/test_bazeldeps.py b/test/integration/toolchains/google/test_bazeldeps.py
+index f0d03a48249..a9a0b3d784c 100644
+--- a/test/integration/toolchains/google/test_bazeldeps.py
++++ b/test/integration/toolchains/google/test_bazeldeps.py
+@@ -1039,6 +1039,25 @@ def package(self):
+             def package_info(self):
+                 self.cpp_info.libs = ["zdll"]
+             """)
++    libiconv = textwrap.dedent("""
++        import os
++        from conan import ConanFile
++        from conan.tools.files import save
++        class Example(ConanFile):
++            name = "libiconv"
++            version = "1.0"
++            options = {"shared": [True, False]}
++            default_options = {"shared": False}
++            def package(self):
++                bindirs = os.path.join(self.package_folder, "bin")
++                libdirs = os.path.join(self.package_folder, "lib")
++                save(self, os.path.join(bindirs, "charset-1.dll"), "")
++                save(self, os.path.join(bindirs, "iconv-2.dll"), "")
++                save(self, os.path.join(libdirs, "charset.lib"), "")
++                save(self, os.path.join(libdirs, "iconv.lib"), "")
++            def package_info(self):
++                self.cpp_info.libs = ["iconv", "charset"]
++            """)
+     openssl = textwrap.dedent("""
+         import os
+         from conan import ConanFile
+@@ -1081,20 +1100,25 @@ def package_info(self):
+         zlib/1.0
+         openssl/1.0
+         libcurl/1.0
++        libiconv/1.0
+         [options]
+         *:shared=True
+     """)
+     c.save({"conanfile.txt": consumer,
+             "zlib/conanfile.py": zlib,
+             "openssl/conanfile.py": openssl,
+-            "libcurl/conanfile.py": libcurl})
++            "libcurl/conanfile.py": libcurl,
++            "libiconv/conanfile.py": libiconv,
++    })
+     c.run("export-pkg zlib -o:a shared=True")
+     c.run("export-pkg openssl -o:a shared=True")
+     c.run("export-pkg libcurl -o:a shared=True")
++    c.run("export-pkg libiconv -o:a shared=True")
+     c.run("install . -g BazelDeps")
+     libcurl_bazel_build = load(None, os.path.join(c.current_folder, "libcurl", "BUILD.bazel"))
+     zlib_bazel_build = load(None, os.path.join(c.current_folder, "zlib", "BUILD.bazel"))
+     openssl_bazel_build = load(None, os.path.join(c.current_folder, "openssl", "BUILD.bazel"))
++    libiconv_bazel_build = load(None, os.path.join(c.current_folder, "libiconv", "BUILD.bazel"))
+     libcurl_expected = textwrap.dedent("""\
+     # Components precompiled libs
+     cc_import(
+@@ -1118,14 +1142,27 @@ def package_info(self):
+     )
+     """)
+     zlib_expected = textwrap.dedent("""\
+-    # Components precompiled libs
+-    # Root package precompiled libs
+     cc_import(
+         name = "zdll_precompiled",
+         shared_library = "bin/zlib1.dll",
+         interface_library = "lib/zdll.lib",
+     )
+     """)
++    iconv_expected = textwrap.dedent("""\
++    cc_import(
++        name = "iconv_precompiled",
++        shared_library = "bin/iconv-2.dll",
++        interface_library = "lib/iconv.lib",
++    )
++    """)
++    charset_expected = textwrap.dedent("""\
++    cc_import(
++        name = "charset_precompiled",
++        shared_library = "bin/charset-1.dll",
++        interface_library = "lib/charset.lib",
++    )
++    """)
+     assert libcurl_expected in libcurl_bazel_build
+     assert zlib_expected in zlib_bazel_build
+     assert openssl_expected in openssl_bazel_build
++    assert iconv_expected in libiconv_bazel_build and charset_expected in libiconv_bazel_build
+diff --git a/test/unittests/tools/google/test_bazel.py b/test/unittests/tools/google/test_bazel.py
+index 5c5aa583693..3aa21d364d5 100644
+--- a/test/unittests/tools/google/test_bazel.py
++++ b/test/unittests/tools/google/test_bazel.py
+@@ -54,8 +54,10 @@ def test_bazel_command_with_config_values():
+     conanfile.conf.define("tools.google.bazel:bazelrc_path", ["/path/to/bazelrc"])
+     bazel = Bazel(conanfile)
+     bazel.build(target='//test:label')
++    commands = conanfile.commands
+     assert "bazel --bazelrc=/path/to/bazelrc build " \
+-           "--config=config --config=config2 //test:label" in conanfile.commands
++           "--config=config --config=config2 //test:label" in commands
++    assert "bazel --bazelrc=/path/to/bazelrc clean" in commands
+ 
+ 
+ @pytest.mark.parametrize("path, pattern, expected", [

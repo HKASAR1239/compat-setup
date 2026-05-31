@@ -1,0 +1,40 @@
+diff --git a/conan/api/subapi/lockfile.py b/conan/api/subapi/lockfile.py
+index 9861fcceac6..7e4bf7de760 100644
+--- a/conan/api/subapi/lockfile.py
++++ b/conan/api/subapi/lockfile.py
+@@ -60,7 +60,7 @@ def update_lockfile_export(self, lockfile, conanfile, ref, is_build_require=Fals
+         is_python_require = conanfile.package_type == "python-require"
+         is_require = not is_python_require and not is_build_require
+         if hasattr(conanfile, "python_requires"):
+-            python_requires = list(conanfile.python_requires.all_refs())
++            python_requires = conanfile.python_requires.all_refs()
+         else:
+             python_requires = []
+         python_requires = python_requires + ([ref] if is_python_require else [])
+diff --git a/conans/client/graph/compute_pid.py b/conans/client/graph/compute_pid.py
+index 0948a03fe3a..a81497bb002 100644
+--- a/conans/client/graph/compute_pid.py
++++ b/conans/client/graph/compute_pid.py
+@@ -21,7 +21,7 @@ def compute_package_id(node, new_config):
+ 
+     python_requires = getattr(conanfile, "python_requires", None)
+     if python_requires:
+-        python_requires = python_requires.all_refs()
++        python_requires = python_requires.info_requires()
+ 
+     data = OrderedDict()
+     build_data = OrderedDict()
+diff --git a/conans/client/graph/python_requires.py b/conans/client/graph/python_requires.py
+index 279ca2b4ced..844f52a10b3 100644
+--- a/conans/client/graph/python_requires.py
++++ b/conans/client/graph/python_requires.py
+@@ -29,6 +29,9 @@ def serialize(self):
+         return {r.ref.repr_notime(): r.serialize() for r in self._pyrequires.values()}
+ 
+     def all_refs(self):
++        return [r.ref for r in self._pyrequires.values()]
++
++    def info_requires(self):
+         return {r.ref: getattr(pyreq.conanfile, "package_id_python_mode", None)
+                 for r, pyreq in self._pyrequires.items()}
+ 

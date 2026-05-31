@@ -1,0 +1,186 @@
+diff --git a/conan/tools/cmake/cmakedeps/cmakedeps.py b/conan/tools/cmake/cmakedeps/cmakedeps.py
+index e37f270cc76..d93659c911b 100644
+--- a/conan/tools/cmake/cmakedeps/cmakedeps.py
++++ b/conan/tools/cmake/cmakedeps/cmakedeps.py
+@@ -136,7 +136,9 @@ def set_property(self, dep, prop, value, build_context=False):
+         """
+         Using this method you can overwrite the :ref:`property<CMakeDeps Properties>` values set by
+         the Conan recipes from the consumer. This can be done for `cmake_file_name`, `cmake_target_name`,
+-        `cmake_find_mode`, `cmake_module_file_name` and `cmake_module_target_name` properties.
++        `cmake_find_mode`, `cmake_module_file_name`, `cmake_module_target_name`, `cmake_additional_variables_prefixes`,
++        `cmake_config_version_compat`, `system_package_version`, `cmake_set_interface_link_directories`,
++        `cmake_build_modules`, `nosoname`, and `cmake_target_aliases`.
+ 
+         :param dep: Name of the dependency to set the :ref:`property<CMakeDeps Properties>`. For
+          components use the syntax: ``dep_name::component_name``.
+diff --git a/conan/tools/cmake/cmakedeps/templates/targets.py b/conan/tools/cmake/cmakedeps/templates/targets.py
+index 66ecff2235b..6d4e1874746 100644
+--- a/conan/tools/cmake/cmakedeps/templates/targets.py
++++ b/conan/tools/cmake/cmakedeps/templates/targets.py
+@@ -25,8 +25,9 @@ def context(self):
+         target_pattern = "" if not self.generating_module else "module-"
+         target_pattern += "{}-Target-*.cmake".format(self.file_name)
+ 
+-        cmake_target_aliases = self.conanfile.cpp_info.\
+-            get_property("cmake_target_aliases", check_type=list) or dict()
++        cmake_target_aliases = self.cmakedeps.get_property("cmake_target_aliases",
++                                                           self.conanfile,
++                                                           check_type=list) or dict()
+ 
+         target = self.root_target_name
+         cmake_target_aliases = {alias: target for alias in cmake_target_aliases}
+@@ -34,10 +35,10 @@ def context(self):
+         cmake_component_target_aliases = dict()
+         for comp_name in self.conanfile.cpp_info.components:
+             if comp_name is not None:
+-                aliases = \
+-                    self.conanfile.cpp_info.components[comp_name].\
+-                    get_property("cmake_target_aliases", check_type=list) or dict()
+-
++                aliases = self.cmakedeps.get_property("cmake_target_aliases",
++                                                      self.conanfile,
++                                                      comp_name=comp_name,
++                                                      check_type=list) or dict()
+                 target = self.get_component_alias(self.conanfile, comp_name)
+                 cmake_component_target_aliases[comp_name] = {alias: target for alias in aliases}
+ 
+diff --git a/conans/model/options.py b/conans/model/options.py
+index 82ce0ba753b..c4c3d194542 100644
+--- a/conans/model/options.py
++++ b/conans/model/options.py
+@@ -234,6 +234,9 @@ def __init__(self, options=None, options_values=None):
+                     tokens = k.split(":", 1)
+                     if len(tokens) == 2:
+                         package, option = tokens
++                        if not package:
++                            raise ConanException("Invalid empty package name in options. "
++                                                 f"Use a pattern like `mypkg/*:{option}`")
+                         if "/" not in package and "*" not in package and "&" not in package:
+                             msg = "The usage of package names `{}` in options is " \
+                                   "deprecated, use a pattern like `{}/*:{}` " \
+diff --git a/test/functional/toolchains/env/test_complete.py b/test/functional/toolchains/env/test_complete.py
+index 48a5718eb2a..85dc9f807b1 100644
+--- a/test/functional/toolchains/env/test_complete.py
++++ b/test/functional/toolchains/env/test_complete.py
+@@ -116,6 +116,9 @@ def package_info(self):
+     assert "The usage of package names `myopenssl:shared` in options is deprecated, " \
+            "use a pattern like `myopenssl/*:shared` instead" in client.out
+ 
++    client.run("create . --name=mycmake --version=1.0 -o=:shared=True", assert_error=True)
++    assert "Invalid empty package" in client.out
++
+     # Fix the default options and repeat the create
+     fixed_cf = mycmake_conanfile.replace('default_options = {"myopenssl:shared": True}',
+                                          'default_options = {"myopenssl*:shared": True}')
+diff --git a/test/integration/command/test_profile.py b/test/integration/command/test_profile.py
+index 16fad0baed6..3ed69f2bdbb 100644
+--- a/test/integration/command/test_profile.py
++++ b/test/integration/command/test_profile.py
+@@ -129,6 +129,8 @@ def test_shorthand_syntax():
+                                          'compiler.version': '11',
+                                          'os': 'Linux'},
+                             'tool_requires': {}}}
++    tc.run("profile show -o:shared=True", assert_error=True)
++    assert 'Invalid empty package name in options. Use a pattern like `mypkg/*:shared`' in tc.out
+ 
+ 
+ def test_profile_show_json():
+diff --git a/test/integration/graph/test_replace_requires.py b/test/integration/graph/test_replace_requires.py
+index 909854d0beb..ae615c9bb90 100644
+--- a/test/integration/graph/test_replace_requires.py
++++ b/test/integration/graph/test_replace_requires.py
+@@ -240,6 +240,8 @@ def generate(self):
+             def build(self):
+                 self.output.info(f"DEP ZLIB build: {self.dependencies['zlib'].ref.name}!")
+             def package_info(self):
++                self.output.info(f"zlib in deps?: {'zlib' in self.dependencies}")
++                self.output.info(f"zlib-ng in deps?: {'zlib-ng' in self.dependencies}")
+                 self.output.info(f"DEP ZLIB package_info: {self.dependencies['zlib'].ref.name}!")
+                 self.cpp_info.requires = ["zlib::myzlib"]
+         """)
+@@ -275,3 +277,5 @@ def package_info(self):
+     assert "app/0.1: DEP ZLIB build: zlib-ng!" in c.out
+     assert "find_package(ZLIB)" in c.out
+     assert "target_link_libraries(... ZLIB::ZLIB)" in c.out
++    assert "zlib in deps?: True" in c.out
++    assert "zlib-ng in deps?: False" in c.out
+diff --git a/test/integration/toolchains/cmake/cmakedeps/test_cmakedeps.py b/test/integration/toolchains/cmake/cmakedeps/test_cmakedeps.py
+index 93c63ce629b..43e203488ff 100644
+--- a/test/integration/toolchains/cmake/cmakedeps/test_cmakedeps.py
++++ b/test/integration/toolchains/cmake/cmakedeps/test_cmakedeps.py
+@@ -726,6 +726,32 @@ def package_info(self):
+     for variable in cmake_variables:
+         assert f"CMakeFileName_{variable}" in dep_config
+ 
++    consumer_conanfile = textwrap.dedent("""
++        from conan import ConanFile
++        from conan.tools.cmake import CMakeDeps
++        class Pkg(ConanFile):
++            name = "pkg"
++            version = "0.1"
++            settings = "os", "build_type", "arch", "compiler"
++
++            def requirements(self):
++                self.requires("dep/1.0")
++
++            def generate(self):
++                deps = CMakeDeps(self)
++                deps.set_property("dep", "cmake_additional_variables_prefixes", ["PREFIX", "prefix", "PREFIX"])
++                deps.generate()
++        """)
++
++    client.save({"consumer/conanfile.py": consumer_conanfile})
++    client.run("install consumer")
++
++    dep_config = client.load(os.path.join("consumer", "CMakeFileNameConfig.cmake"))
++    for variable in cmake_variables:
++        assert f"CMakeFileName_{variable}" in dep_config
++        assert f"PREFIX_{variable}" in dep_config
++        assert f"prefix_{variable}" in dep_config
++
+     conanfile = base_conanfile + """
+     def package_info(self):
+         self.cpp_info.set_property("cmake_file_name", "NewCMakeFileName")
+@@ -843,3 +869,42 @@ def generate(self):
+     c.run("create dep")
+     c.run("create app", assert_error=True)
+     assert 'The expected type for foo is "list", but "int" was found' in c.out
++
++
++def test_alias_cmakedeps_set_property():
++    tc = TestClient()
++    tc.save({"dep/conanfile.py": textwrap.dedent("""
++
++        from conan import ConanFile
++        class Dep(ConanFile):
++            name = "dep"
++            version = "1.0"
++            settings = "os", "compiler", "build_type", "arch"
++            def package_info(self):
++                self.cpp_info.components["mycomp"].set_property("cmake_target_name", "dep::mycomponent")
++        """),
++             "conanfile.py": textwrap.dedent("""
++             from conan import ConanFile
++             from conan.tools.cmake import CMakeDeps, CMake
++             class Pkg(ConanFile):
++                name = "pkg"
++                version = "1.0"
++                settings = "os", "compiler", "build_type", "arch"
++
++                requires = "dep/1.0"
++
++                def generate(self):
++                    deps = CMakeDeps(self)
++                    deps.set_property("dep", "cmake_target_aliases", ["alias", "dep::other_name"])
++                    deps.set_property("dep::mycomp", "cmake_target_aliases", ["component_alias", "dep::my_aliased_component"])
++                    deps.generate()
++             """)})
++    tc.run("create dep")
++    tc.run("install .")
++    targetsData = tc.load("depTargets.cmake")
++    assert "add_library(dep::dep" in targetsData
++    assert "add_library(alias" in targetsData
++    assert "add_library(dep::other_name" in targetsData
++
++    assert "add_library(component_alias" in targetsData
++    assert "add_library(dep::my_aliased_component" in targetsData

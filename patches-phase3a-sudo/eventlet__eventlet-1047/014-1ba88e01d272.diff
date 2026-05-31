@@ -1,0 +1,15 @@
+diff --git a/tests/isolated/patcher_fork_after_monkey_patch.py b/tests/isolated/patcher_fork_after_monkey_patch.py
+index 6fc028ac9..421588518 100644
+--- a/tests/isolated/patcher_fork_after_monkey_patch.py
++++ b/tests/isolated/patcher_fork_after_monkey_patch.py
+@@ -36,8 +36,8 @@ def target():
+     check(5, eventlet.green.threading, 'pre-fork green')
+ 
+     if os.fork() == 0:
+-        # Inside the child, we should only have a main thread,
+-        # but old pythons make it difficult to ensure
++        # Inside the child, we should only have a main _OS_ thread,
++        # but green threads should survive.
+         check(5, threading, 'child post-fork patched')
+         check(1, _threading, 'child post-fork original')
+         check(5, eventlet.green.threading, 'child post-fork green')

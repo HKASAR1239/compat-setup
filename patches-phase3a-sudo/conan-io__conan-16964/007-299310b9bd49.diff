@@ -1,0 +1,3243 @@
+diff --git a/.github/stale.yml b/.github/stale.yml
+deleted file mode 100644
+index 959462acf7b..00000000000
+--- a/.github/stale.yml
++++ /dev/null
+@@ -1,61 +0,0 @@
+-# Configuration for probot-stale - https://github.com/probot/stale
+-
+-# Number of days of inactivity before an Issue or Pull Request becomes stale
+-daysUntilStale: 60
+-
+-# Number of days of inactivity before an Issue or Pull Request with the stale label is closed.
+-# Set to false to disable. If disabled, issues still need to be closed manually, but will remain marked as stale.
+-daysUntilClose: 7
+-
+-# Only issues or pull requests with all of these labels are check if stale. Defaults to `[]` (disabled)
+-onlyLabels:
+-    - "type: question"
+-
+-# Issues or Pull Requests with these labels will never be considered stale. Set to `[]` to disable
+-exemptLabels:
+-    - "stage: triaging"
+-
+-# Set to true to ignore issues in a project (defaults to false)
+-exemptProjects: false
+-
+-# Set to true to ignore issues in a milestone (defaults to false)
+-exemptMilestones: false
+-
+-# Set to true to ignore issues with an assignee (defaults to false)
+-exemptAssignees: false
+-
+-# Label to use when marking as stale
+-staleLabel: staled
+-
+-# Comment to post when marking as stale. Set to `false` to disable
+-markComment: >
+-  This issue has been automatically marked as stale because it has not had
+-  recent activity. It will be closed if no further activity occurs. Thank you
+-  for your contributions.
+-
+-# Comment to post when removing the stale label.
+-# unmarkComment: >
+-#   Your comment here.
+-
+-# Comment to post when closing a stale Issue or Pull Request.
+- closeComment: >
+-   This issue has been automatically closed because it has not had recent activity. Feel
+-     free to reopen it if necessary. Thank you for your contributions.
+-
+-# Limit the number of actions per hour, from 1-30. Default is 30
+-limitPerRun: 30
+-
+-# Limit to only `issues` or `pulls`
+-only: issues
+-
+-# Optionally, specify configuration settings that are specific to just 'issues' or 'pulls':
+-# pulls:
+-#   daysUntilStale: 30
+-#   markComment: >
+-#     This pull request has been automatically marked as stale because it has not had
+-#     recent activity. It will be closed if no further activity occurs. Thank you
+-#     for your contributions.
+-
+-# issues:
+-#   exemptLabels:
+-#     - confirmed
+diff --git a/conan/api/conan_api.py b/conan/api/conan_api.py
+index 604e205e85e..7c5f364bd0e 100644
+--- a/conan/api/conan_api.py
++++ b/conan/api/conan_api.py
+@@ -19,7 +19,7 @@
+ from conan.api.subapi.upload import UploadAPI
+ from conans.client.migrations import ClientMigrator
+ from conans.client.userio import init_colorama
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.version import Version
+ from conan.internal.paths import get_conan_user_home
+ from conans.model.version_range import validate_conan_version
+diff --git a/conan/api/model.py b/conan/api/model.py
+index abc5ebc84e0..e0c6fe91dd3 100644
+--- a/conan/api/model.py
++++ b/conan/api/model.py
+@@ -5,7 +5,8 @@
+ 
+ from conans.client.graph.graph import RECIPE_EDITABLE, RECIPE_CONSUMER, RECIPE_PLATFORM, \
+     RECIPE_VIRTUAL, BINARY_SKIP, BINARY_MISSING, BINARY_INVALID
+-from conans.errors import ConanException, NotFoundException
++from conan.internal.errors import NotFoundException
++from conan.errors import ConanException
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ from conans.util.files import load
+diff --git a/conan/api/output.py b/conan/api/output.py
+index f7fc1fe6196..dd4a8e7953d 100644
+--- a/conan/api/output.py
++++ b/conan/api/output.py
+@@ -7,7 +7,7 @@
+ from colorama import Fore, Style
+ 
+ from conans.client.userio import color_enabled
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ LEVEL_QUIET = 80  # -q
+ LEVEL_ERROR = 70  # Errors
+diff --git a/conan/api/subapi/cache.py b/conan/api/subapi/cache.py
+index dd62c195639..d347b272809 100644
+--- a/conan/api/subapi/cache.py
++++ b/conan/api/subapi/cache.py
+@@ -11,7 +11,7 @@
+ from conan.internal.conan_app import ConanApp
+ from conan.internal.cache.integrity_check import IntegrityChecker
+ from conans.client.downloaders.download_cache import DownloadCache
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ from conans.util.dates import revision_timestamp_now
+diff --git a/conan/api/subapi/command.py b/conan/api/subapi/command.py
+index 4405f38923b..dc2048d9f2f 100644
+--- a/conan/api/subapi/command.py
++++ b/conan/api/subapi/command.py
+@@ -1,4 +1,5 @@
+-from conans.errors import ConanException
++from conan.api.output import ConanOutput
++from conan.errors import ConanException
+ 
+ 
+ class CommandAPI:
+@@ -20,5 +21,18 @@ def run(self, cmd):
+             command = commands[current_cmd]
+         except KeyError:
+             raise ConanException(f"Command {current_cmd} does not exist")
++        # Conan has some global state in the ConanOutput class that
++        # get redefined when running a command and leak to the calling scope
++        # if running from a custom command.
++        # Store the old one and restore it after the command execution as a workaround.
++        _conan_output_level = ConanOutput._conan_output_level
++        _silent_warn_tags = ConanOutput._silent_warn_tags
++        _warnings_as_errors = ConanOutput._warnings_as_errors
+ 
+-        return command.run_cli(self.conan_api, args)
++        try:
++            result = command.run_cli(self.conan_api, args)
++        finally:
++            ConanOutput._conan_output_level = _conan_output_level
++            ConanOutput._silent_warn_tags = _silent_warn_tags
++            ConanOutput._warnings_as_errors = _warnings_as_errors
++        return result
+diff --git a/conan/api/subapi/config.py b/conan/api/subapi/config.py
+index c3ba8032ca9..57d0ec02635 100644
+--- a/conan/api/subapi/config.py
++++ b/conan/api/subapi/config.py
+@@ -15,7 +15,7 @@
+ from conans.client.graph.graph import CONTEXT_HOST, RECIPE_VIRTUAL, Node
+ from conans.client.graph.graph_builder import DepsGraphBuilder
+ from conans.client.graph.profile_node_definer import consumer_definer
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.conf import ConfDefinition, BUILT_IN_CONFS
+ from conans.model.pkg_type import PackageType
+ from conans.model.recipe_ref import RecipeReference
+diff --git a/conan/api/subapi/download.py b/conan/api/subapi/download.py
+index 2ccb87c5d73..1bd369557ea 100644
+--- a/conan/api/subapi/download.py
++++ b/conan/api/subapi/download.py
+@@ -5,7 +5,7 @@
+ from conan.api.model import Remote, PackagesList
+ from conan.api.output import ConanOutput
+ from conan.internal.conan_app import ConanApp
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ 
+diff --git a/conan/api/subapi/graph.py b/conan/api/subapi/graph.py
+index 2b526058779..b6ff4f844de 100644
+--- a/conan/api/subapi/graph.py
++++ b/conan/api/subapi/graph.py
+@@ -5,7 +5,7 @@
+ from conans.client.graph.graph_binaries import GraphBinariesAnalyzer
+ from conans.client.graph.graph_builder import DepsGraphBuilder
+ from conans.client.graph.profile_node_definer import initialize_conanfile_profile, consumer_definer
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import RecipeReference
+ 
+ 
+diff --git a/conan/api/subapi/install.py b/conan/api/subapi/install.py
+index adb134bc0f0..cf3a9c4e744 100644
+--- a/conan/api/subapi/install.py
++++ b/conan/api/subapi/install.py
+@@ -6,7 +6,7 @@
+ 
+ from conans.client.graph.install_graph import InstallGraph
+ from conans.client.installer import BinaryInstaller
+-from conans.errors import ConanInvalidConfiguration
++from conan.errors import ConanInvalidConfiguration
+ 
+ 
+ class InstallAPI:
+diff --git a/conan/api/subapi/list.py b/conan/api/subapi/list.py
+index fecf61ab398..83eaf6af86f 100644
+--- a/conan/api/subapi/list.py
++++ b/conan/api/subapi/list.py
+@@ -7,7 +7,8 @@
+ from conan.internal.api.list.query_parse import filter_package_configs
+ from conan.internal.conan_app import ConanApp
+ from conan.internal.paths import CONANINFO
+-from conans.errors import ConanException, NotFoundException
++from conan.internal.errors import NotFoundException
++from conan.errors import ConanException
+ from conans.model.info import load_binary_info
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference, ref_matches
+@@ -149,7 +150,6 @@ def select(self, pattern, package_query=None, remote=None, lru=None, profile=Non
+         if search_ref:
+             refs = self.conan_api.search.recipes(search_ref, remote=remote)
+             refs = pattern.filter_versions(refs)
+-            refs = sorted(refs)  # Order alphabetical and older versions first
+             pattern.check_refs(refs)
+             out.info(f"Found {len(refs)} pkg/version recipes matching {search_ref} in {remote_name}")
+         else:
+diff --git a/conan/api/subapi/local.py b/conan/api/subapi/local.py
+index 224ef3dcd56..7b252a6bd66 100644
+--- a/conan/api/subapi/local.py
++++ b/conan/api/subapi/local.py
+@@ -7,7 +7,8 @@
+ from conans.client.graph.graph import CONTEXT_HOST
+ from conans.client.graph.profile_node_definer import initialize_conanfile_profile
+ from conans.client.source import run_source_method
+-from conans.errors import ConanException, conanfile_exception_formatter
++from conan.internal.errors import conanfile_exception_formatter
++from conan.errors import ConanException
+ from conans.model.recipe_ref import RecipeReference
+ from conans.util.files import chdir
+ 
+diff --git a/conan/api/subapi/lockfile.py b/conan/api/subapi/lockfile.py
+index 1d193bbcd79..76a80717976 100644
+--- a/conan/api/subapi/lockfile.py
++++ b/conan/api/subapi/lockfile.py
+@@ -3,7 +3,7 @@
+ from conan.api.output import ConanOutput
+ from conan.cli import make_abs_path
+ from conans.client.graph.graph import Overrides
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.graph_lock import Lockfile, LOCKFILE
+ 
+ 
+diff --git a/conan/api/subapi/new.py b/conan/api/subapi/new.py
+index 46812371887..081f7e75484 100644
+--- a/conan/api/subapi/new.py
++++ b/conan/api/subapi/new.py
+@@ -3,7 +3,7 @@
+ 
+ from jinja2 import Template, StrictUndefined
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.util.files import load
+ from conans import __version__
+ 
+diff --git a/conan/api/subapi/profiles.py b/conan/api/subapi/profiles.py
+index d3849525add..065a178d4a4 100644
+--- a/conan/api/subapi/profiles.py
++++ b/conan/api/subapi/profiles.py
+@@ -5,7 +5,8 @@
+ 
+ from conans.client.loader import load_python_file
+ from conan.internal.api.profile.profile_loader import ProfileLoader
+-from conans.errors import ConanException, scoped_traceback
++from conan.internal.errors import scoped_traceback
++from conan.errors import ConanException
+ from conans.model.profile import Profile
+ 
+ DEFAULT_PROFILE_NAME = "default"
+diff --git a/conan/api/subapi/remotes.py b/conan/api/subapi/remotes.py
+index 23b31a225ce..77fe0dd3480 100644
+--- a/conan/api/subapi/remotes.py
++++ b/conan/api/subapi/remotes.py
+@@ -10,7 +10,7 @@
+ from conans.client.rest_client_local_recipe_index import add_local_recipes_index_remote, \
+     remove_local_recipes_index_remote
+ from conan.internal.api.remotes.localdb import LocalDB
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.util.files import save, load
+ 
+ CONAN_CENTER_REMOTE_NAME = "conancenter"
+diff --git a/conan/api/subapi/search.py b/conan/api/subapi/search.py
+index 582b753c652..997aa8d8bf6 100644
+--- a/conan/api/subapi/search.py
++++ b/conan/api/subapi/search.py
+@@ -16,17 +16,9 @@ def recipes(self, query: str, remote=None):
+         if remote:
+             refs = app.remote_manager.search_recipes(remote, query)
+         else:
+-            references = app.cache.search_recipes(query)
+-            # For consistency with the remote search, we return references without revisions
+-            # user could use further the API to look for the revisions
+-            refs = []
+-            for r in references:
+-                r.revision = None
+-                r.timestamp = None
+-                if r not in refs:
+-                    refs.append(r)
++            refs = app.cache.search_recipes(query)
+         ret = []
+         for r in refs:
+             if not only_none_user_channel or (r.user is None and r.channel is None):
+                 ret.append(r)
+-        return ret
++        return sorted(ret)
+diff --git a/conan/api/subapi/upload.py b/conan/api/subapi/upload.py
+index 47bf8b1c376..0522096e697 100644
+--- a/conan/api/subapi/upload.py
++++ b/conan/api/subapi/upload.py
+@@ -8,7 +8,8 @@
+     gather_metadata
+ from conans.client.pkg_sign import PkgSignaturesPlugin
+ from conans.client.rest.file_uploader import FileUploader
+-from conans.errors import ConanException, AuthenticationException, ForbiddenException
++from conan.internal.errors import AuthenticationException, ForbiddenException
++from conan.errors import ConanException
+ 
+ 
+ class UploadAPI:
+diff --git a/conan/cli/commands/download.py b/conan/cli/commands/download.py
+index dbaa4f73e85..a7c72a0ccbd 100644
+--- a/conan/cli/commands/download.py
++++ b/conan/cli/commands/download.py
+@@ -4,7 +4,7 @@
+ from conan.cli import make_abs_path
+ from conan.cli.command import conan_command, OnceArgument
+ from conan.cli.commands.list import print_list_text, print_list_json
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ @conan_command(group="Creator", formatters={"text": print_list_text,
+diff --git a/conan/cli/commands/export_pkg.py b/conan/cli/commands/export_pkg.py
+index a47cdfe46a2..e61c5ce7252 100644
+--- a/conan/cli/commands/export_pkg.py
++++ b/conan/cli/commands/export_pkg.py
+@@ -7,7 +7,7 @@
+ from conan.cli.commands.create import _get_test_conanfile_path
+ from conan.cli.formatters.graph import format_graph_json
+ from conan.cli.printers.graph import print_graph_basic
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ @conan_command(group="Creator", formatters={"json": format_graph_json})
+diff --git a/conan/cli/commands/graph.py b/conan/cli/commands/graph.py
+index a929f39f1e9..60e71f0d0fd 100644
+--- a/conan/cli/commands/graph.py
++++ b/conan/cli/commands/graph.py
+@@ -10,12 +10,13 @@
+ from conan.cli.formatters.graph import format_graph_html, format_graph_json, format_graph_dot
+ from conan.cli.formatters.graph.build_order_html import format_build_order_html
+ from conan.cli.formatters.graph.graph_info_text import format_graph_info
++from conan.cli.printers import print_profiles
+ from conan.cli.printers.graph import print_graph_packages, print_graph_basic
+ from conan.errors import ConanException
+ from conan.internal.deploy import do_deploys
+ from conans.client.graph.graph import BINARY_MISSING
+ from conans.client.graph.install_graph import InstallGraph
+-from conans.errors import NotFoundException
++from conan.internal.errors import NotFoundException
+ from conans.model.recipe_ref import ref_matches, RecipeReference
+ 
+ 
+@@ -209,6 +210,7 @@ def graph_info(conan_api, parser, subparser, *args):
+                                                partial=args.lockfile_partial,
+                                                overrides=overrides)
+     profile_host, profile_build = conan_api.profiles.get_profiles_from_args(args)
++    print_profiles(profile_host, profile_build)
+ 
+     if path:
+         deps_graph = conan_api.graph.load_graph_consumer(path, args.name, args.version,
+diff --git a/conan/cli/commands/list.py b/conan/cli/commands/list.py
+index ed700fe5e15..41c383692ac 100644
+--- a/conan/cli/commands/list.py
++++ b/conan/cli/commands/list.py
+@@ -6,7 +6,7 @@
+ from conan.cli import make_abs_path
+ from conan.cli.command import conan_command, OnceArgument
+ from conan.cli.formatters.list import list_packages_html
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.util.dates import timestamp_to_str
+ 
+ 
+diff --git a/conan/cli/commands/pkglist.py b/conan/cli/commands/pkglist.py
+index ee8d4aaaa6e..e4dc701a946 100644
+--- a/conan/cli/commands/pkglist.py
++++ b/conan/cli/commands/pkglist.py
+@@ -6,7 +6,7 @@
+ from conan.cli.command import conan_command, conan_subcommand
+ from conan.cli.commands.list import print_list_text, print_list_json
+ from conan.cli.formatters.list import list_packages_html
+-from conans.errors import NotFoundException
++from conan.internal.errors import NotFoundException
+ 
+ 
+ @conan_command(group="Consumer")
+diff --git a/conan/cli/commands/remove.py b/conan/cli/commands/remove.py
+index 74ac93d99dd..85e925e792b 100644
+--- a/conan/cli/commands/remove.py
++++ b/conan/cli/commands/remove.py
+@@ -5,7 +5,7 @@
+ from conan.cli.command import conan_command, OnceArgument
+ from conan.cli.commands.list import print_list_json, print_serial
+ from conans.client.userio import UserInput
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ def summary_remove_list(results):
+diff --git a/conan/cps/cps.py b/conan/cps/cps.py
+index cec264e6543..67007d8570a 100644
+--- a/conan/cps/cps.py
++++ b/conan/cps/cps.py
+@@ -1,11 +1,8 @@
+-import glob
+ import json
+ import os
+ from enum import Enum
+ 
+-from conan.api.output import ConanOutput
+ from conans.model.build_info import CppInfo
+-from conans.model.pkg_type import PackageType
+ from conans.util.files import save, load
+ 
+ 
+@@ -13,7 +10,7 @@ class CPSComponentType(Enum):
+     DYLIB = "dylib"
+     ARCHIVE = "archive"
+     INTERFACE = "interface"
+-    EXE = "exe"
++    EXE = "executable"
+     JAR = "jar"
+     UNKNOWN = "unknown"
+ 
+@@ -35,60 +32,6 @@ def from_conan(pkg_type):
+         return CPSComponentType(_package_type_map.get(str(pkg_type), "unknown"))
+ 
+ 
+-def deduce_full_lib_info(libname, full_lib, cpp_info, pkg_type):
+-    if full_lib.get("type") is not None:
+-        assert "location" in full_lib, f"If 'type' is specified in library {libname}, 'location' too"
+-        return
+-
+-    # Recipe didn't specify things, need to auto deduce
+-    libdirs = [x.replace("\\", "/") for x in cpp_info.libdirs]
+-    bindirs = [x.replace("\\", "/") for x in cpp_info.bindirs]
+-
+-    static_patterns = [f"{libname}.lib", f"{libname}.a", f"lib{libname}.a"]
+-    shared_patterns = [f"lib{libname}.so", f"lib{libname}.so.*", f"lib{libname}.dylib",
+-                       f"lib{libname}.*dylib"]
+-    dll_patterns = [f"{libname}.dll"]
+-
+-    def _find_matching(patterns, dirs):
+-        matches = set()
+-        for pattern in patterns:
+-            for d in dirs:
+-                matches.update(glob.glob(f"{d}/{pattern}"))
+-        if len(matches) == 1:
+-            return next(iter(matches))
+-
+-    static_location = _find_matching(static_patterns, libdirs)
+-    shared_location = _find_matching(shared_patterns, libdirs)
+-    dll_location = _find_matching(dll_patterns, bindirs)
+-    if static_location:
+-        if shared_location:
+-            ConanOutput().warning(f"Lib {libname} has both static {static_location} and "
+-                                  f"shared {shared_location} in the same package")
+-            if pkg_type is PackageType.STATIC:
+-                full_lib["location"] = static_location
+-                full_lib["type"] = PackageType.STATIC
+-            else:
+-                full_lib["location"] = shared_location
+-                full_lib["type"] = PackageType.SHARED
+-        elif dll_location:
+-            full_lib["location"] = dll_location
+-            full_lib["link_location"] = static_location
+-            full_lib["type"] = PackageType.SHARED
+-        else:
+-            full_lib["location"] = static_location
+-            full_lib["type"] = PackageType.STATIC
+-    elif shared_location:
+-        full_lib["location"] = shared_location
+-        full_lib["type"] = PackageType.SHARED
+-    elif dll_location:
+-        # Only .dll but no link library
+-        full_lib["location"] = dll_location
+-        full_lib["type"] = PackageType.SHARED
+-    if full_lib.get("type") != pkg_type:
+-        ConanOutput().warning(f"Lib {libname} deduced as '{full_lib.get('type')}, "
+-                              f"but 'package_type={pkg_type}'")
+-
+-
+ class CPSComponent:
+     def __init__(self, component_type=None):
+         self.includes = []
+@@ -142,17 +85,21 @@ def from_cpp_info(cpp_info, pkg_type, libname=None):
+             cps_comp.type = CPSComponentType.INTERFACE
+             return cps_comp
+ 
+-        libname = libname or next(iter(cpp_info.full_libs))
+-        full_lib = cpp_info.full_libs[libname]
+-        deduce_full_lib_info(libname, full_lib, cpp_info, pkg_type)
+-        cps_comp.type = CPSComponentType.from_conan(full_lib.get("type"))
+-        cps_comp.location = full_lib.get("location")
+-        cps_comp.link_location = full_lib.get("link_location")
++        cpp_info.deduce_cps(pkg_type)
++        cps_comp.type = CPSComponentType.from_conan(cpp_info.type)
++        cps_comp.location = cpp_info.location
++        cps_comp.link_location = cpp_info.link_location
+         cps_comp.link_libraries = cpp_info.system_libs
+         required = cpp_info.requires
+         cps_comp.requires = [f":{c}" if "::" not in c else c.replace("::", ":") for c in required]
+         return cps_comp
+ 
++    def update(self, conf, conf_def):
++        # TODO: conf not used at the moent
++        self.location = self.location or conf_def.get("location")
++        self.link_location = self.link_location or conf_def.get("link_location")
++        self.link_libraries = self.link_libraries or conf_def.get("link_libraries")
++
+ 
+ class CPS:
+     """ represents the CPS file for 1 package
+@@ -299,4 +246,19 @@ def save(self, folder):
+     @staticmethod
+     def load(file):
+         contents = load(file)
+-        return CPS.deserialize(json.loads(contents))
++        base = CPS.deserialize(json.loads(contents))
++
++        path, name = os.path.split(file)
++        basename, ext = os.path.splitext(name)
++        # Find, load and merge configuration specific files
++        for conf in "release", "debug":
++            full_conf = os.path.join(path, f"{basename}@{conf}{ext}")
++            if os.path.exists(full_conf):
++                conf_content = json.loads(load(full_conf))
++                for comp, comp_def in conf_content.get("components", {}).items():
++                    existing = base.components.get(comp)
++                    if existing:
++                        existing.update(conf, comp_def)
++                    else:
++                        base.components[comp] = comp_def
++        return base
+diff --git a/conan/errors.py b/conan/errors.py
+index 1b237c2a913..b150a729ebe 100644
+--- a/conan/errors.py
++++ b/conan/errors.py
+@@ -1,3 +1,22 @@
+-from conans.errors import ConanException
+-from conans.errors import ConanInvalidConfiguration
+-from conans.errors import ConanMigrationError
++class ConanException(Exception):
++    """ Generic conan exception """
++    def __init__(self, msg=None, remote=None):
++        self.remote = remote
++        super().__init__(msg)
++
++    def __str__(self):
++        msg = super().__str__()
++        if self.remote:
++            return f"{msg}. [Remote: {self.remote.name}]"
++        return msg
++
++
++class ConanInvalidConfiguration(ConanException):
++    """
++    This binary, for the requested configuration and package-id cannot be built
++    """
++    pass
++
++
++class ConanMigrationError(ConanException):
++    pass
+diff --git a/conan/internal/api/config/config_installer.py b/conan/internal/api/config/config_installer.py
+index 3a7e63679dd..d31569e90d3 100644
+--- a/conan/internal/api/config/config_installer.py
++++ b/conan/internal/api/config/config_installer.py
+@@ -7,7 +7,7 @@
+ 
+ from conan.api.output import ConanOutput
+ from conans.client.downloaders.file_downloader import FileDownloader
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.util.files import mkdir, rmdir, remove, unzip, chdir
+ from conans.util.runners import detect_runner
+ 
+diff --git a/conan/internal/api/detect/detect_vs.py b/conan/internal/api/detect/detect_vs.py
+index 34859d7ca9d..6139870398e 100644
+--- a/conan/internal/api/detect/detect_vs.py
++++ b/conan/internal/api/detect/detect_vs.py
+@@ -3,7 +3,7 @@
+ from shutil import which
+ 
+ from conan.tools.build import cmd_args_to_string
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ def vs_installation_path(version):
+diff --git a/conan/internal/api/export.py b/conan/internal/api/export.py
+index 279693feee3..bc0d09c7abc 100644
+--- a/conan/internal/api/export.py
++++ b/conan/internal/api/export.py
+@@ -4,7 +4,8 @@
+ from conan.tools.files import copy
+ from conan.api.output import ConanOutput
+ from conan.tools.scm import Git
+-from conans.errors import ConanException, conanfile_exception_formatter
++from conan.internal.errors import conanfile_exception_formatter
++from conan.errors import ConanException
+ from conans.model.manifest import FileTreeManifest
+ from conans.model.recipe_ref import RecipeReference
+ from conan.internal.paths import DATA_YML
+diff --git a/conan/internal/api/install/generators.py b/conan/internal/api/install/generators.py
+index 9b7de140d42..3fd02da74ef 100644
+--- a/conan/internal/api/install/generators.py
++++ b/conan/internal/api/install/generators.py
+@@ -5,7 +5,8 @@
+ 
+ from conan.internal.cache.home_paths import HomePaths
+ from conans.client.subsystems import deduce_subsystem, subsystem_path
+-from conans.errors import ConanException, conanfile_exception_formatter
++from conan.internal.errors import conanfile_exception_formatter
++from conan.errors import ConanException
+ from conans.util.files import save, mkdir, chdir
+ 
+ _generators = {"CMakeToolchain": "conan.tools.cmake",
+diff --git a/conan/internal/api/profile/profile_loader.py b/conan/internal/api/profile/profile_loader.py
+index e9047054a49..3ea76a37946 100644
+--- a/conan/internal/api/profile/profile_loader.py
++++ b/conan/internal/api/profile/profile_loader.py
+@@ -9,7 +9,7 @@
+ from conan.internal.api.detect import detect_api
+ from conan.internal.cache.home_paths import HomePaths
+ from conan.tools.env.environment import ProfileEnvironment
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.conf import ConfDefinition, CORE_CONF_PATTERN
+ from conans.model.options import Options
+ from conans.model.profile import Profile
+diff --git a/conan/internal/api/uploader.py b/conan/internal/api/uploader.py
+index 2cdf1ff2ad7..8d8b8a4d93c 100644
+--- a/conan/internal/api/uploader.py
++++ b/conan/internal/api/uploader.py
+@@ -6,7 +6,8 @@
+ from conan.internal.conan_app import ConanApp
+ from conan.api.output import ConanOutput
+ from conans.client.source import retrieve_exports_sources
+-from conans.errors import ConanException, NotFoundException
++from conan.internal.errors import NotFoundException
++from conan.errors import ConanException
+ from conan.internal.paths import (CONAN_MANIFEST, CONANFILE, EXPORT_SOURCES_TGZ_NAME,
+                                   EXPORT_TGZ_NAME, PACKAGE_TGZ_NAME, CONANINFO)
+ from conans.util.files import (clean_dirty, is_dirty, gather_files,
+diff --git a/conan/internal/cache/cache.py b/conan/internal/cache/cache.py
+index 5a8e754f277..4436555c4a4 100644
+--- a/conan/internal/cache/cache.py
++++ b/conan/internal/cache/cache.py
+@@ -10,7 +10,8 @@
+ # TODO: Random folders are no longer accessible, how to get rid of them asap?
+ # TODO: We need the workflow to remove existing references.
+ from conan.internal.cache.db.cache_database import CacheDatabase
+-from conans.errors import ConanReferenceAlreadyExistsInDB, ConanException
++from conan.internal.errors import ConanReferenceAlreadyExistsInDB
++from conan.errors import ConanException
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ from conans.util.dates import revision_timestamp_now
+@@ -178,10 +179,7 @@ def search_recipes(self, pattern=None, ignorecase=True):
+             pattern = translate(pattern)
+             pattern = re.compile(pattern, re.IGNORECASE if ignorecase else 0)
+ 
+-        refs = self._db.list_references()
+-        if pattern:
+-            refs = [r for r in refs if r.partial_match(pattern)]
+-        return refs
++        return self._db.list_references(pattern)
+ 
+     def exists_prev(self, pref):
+         # Used just by download to skip downloads if prev already exists in cache
+diff --git a/conan/internal/cache/db/cache_database.py b/conan/internal/cache/db/cache_database.py
+index fffa02486a0..56b26688db5 100644
+--- a/conan/internal/cache/db/cache_database.py
++++ b/conan/internal/cache/db/cache_database.py
+@@ -90,9 +90,11 @@ def create_recipe(self, path, ref: RecipeReference):
+     def create_package(self, path, ref: PkgReference, build_id):
+         self._packages.create(path, ref, build_id=build_id)
+ 
+-    def list_references(self):
+-        return [d["ref"]
+-                for d in self._recipes.all_references()]
++    def list_references(self, pattern=None):
++        """Returns a list of all RecipeReference in the cache, optionally filtering by pattern.
++         The references have their revision and timestamp attributes unset"""
++        return [ref for ref in self._recipes.all_references()
++                if pattern is None or ref.partial_match(pattern)]
+ 
+     def get_package_revisions_references(self, pref: PkgReference, only_latest_prev=False):
+         return [d["pref"]
+diff --git a/conan/internal/cache/db/packages_table.py b/conan/internal/cache/db/packages_table.py
+index a5ec13b7a51..9f066d9b7ef 100644
+--- a/conan/internal/cache/db/packages_table.py
++++ b/conan/internal/cache/db/packages_table.py
+@@ -1,7 +1,7 @@
+ import sqlite3
+ 
+ from conan.internal.cache.db.table import BaseDbTable
+-from conans.errors import ConanReferenceDoesNotExistInDB, ConanReferenceAlreadyExistsInDB
++from conan.internal.errors import ConanReferenceDoesNotExistInDB, ConanReferenceAlreadyExistsInDB
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ from conans.util.dates import timestamp_now
+diff --git a/conan/internal/cache/db/recipes_table.py b/conan/internal/cache/db/recipes_table.py
+index fe40ab56782..d17fe36e8fa 100644
+--- a/conan/internal/cache/db/recipes_table.py
++++ b/conan/internal/cache/db/recipes_table.py
+@@ -1,7 +1,7 @@
+ import sqlite3
+ 
+ from conan.internal.cache.db.table import BaseDbTable
+-from conans.errors import ConanReferenceDoesNotExistInDB, ConanReferenceAlreadyExistsInDB
++from conan.internal.errors import ConanReferenceDoesNotExistInDB, ConanReferenceAlreadyExistsInDB
+ from conans.model.recipe_ref import RecipeReference
+ from conans.util.dates import timestamp_now
+ 
+@@ -80,18 +80,12 @@ def remove(self, ref: RecipeReference):
+ 
+     # returns all different conan references (name/version@user/channel)
+     def all_references(self):
+-        query = f'SELECT DISTINCT {self.columns.reference}, ' \
+-                    f'{self.columns.rrev}, ' \
+-                    f'{self.columns.path} ,' \
+-                    f'{self.columns.timestamp}, ' \
+-                    f'{self.columns.lru} ' \
+-                    f'FROM {self.table_name} ' \
+-                    f'ORDER BY {self.columns.timestamp} DESC'
++        query = f'SELECT DISTINCT {self.columns.reference} FROM {self.table_name}'
+ 
+         with self.db_connection() as conn:
+             r = conn.execute(query)
+-            result = [self._as_dict(self.row_type(*row)) for row in r.fetchall()]
+-        return result
++            rows = r.fetchall()
++            return [RecipeReference.loads(row[0]) for row in rows]
+ 
+     def get_recipe(self, ref: RecipeReference):
+         query = f'SELECT * FROM {self.table_name} ' \
+diff --git a/conan/internal/cache/integrity_check.py b/conan/internal/cache/integrity_check.py
+index fa52d536255..e711701a5b9 100644
+--- a/conan/internal/cache/integrity_check.py
++++ b/conan/internal/cache/integrity_check.py
+@@ -1,7 +1,7 @@
+ import os
+ 
+ from conan.api.output import ConanOutput
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ 
+diff --git a/conan/internal/deploy.py b/conan/internal/deploy.py
+index 05895794ef4..977bb07445f 100644
+--- a/conan/internal/deploy.py
++++ b/conan/internal/deploy.py
+@@ -5,7 +5,8 @@
+ from conan.internal.cache.home_paths import HomePaths
+ from conan.api.output import ConanOutput
+ from conans.client.loader import load_python_file
+-from conans.errors import ConanException, conanfile_exception_formatter
++from conan.internal.errors import conanfile_exception_formatter
++from conan.errors import ConanException
+ from conans.util.files import rmdir, mkdir
+ 
+ 
+diff --git a/conans/errors.py b/conan/internal/errors.py
+similarity index 82%
+rename from conans/errors.py
+rename to conan/internal/errors.py
+index 294658603a6..57c559e61a9 100644
+--- a/conans/errors.py
++++ b/conan/internal/errors.py
+@@ -1,15 +1,8 @@
+-"""
+-    Exceptions raised and handled in Conan
+-    These exceptions are mapped between server (as an HTTP response) and client
+-    through the REST API. When an error happens in server its translated to an HTTP
+-    error code that its sent to client. Client reads the server code and raise the
+-    matching exception.
+-
+-    see return_plugin.py
+-"""
+ import traceback
+ from contextlib import contextmanager
+ 
++from conan.errors import ConanException, ConanInvalidConfiguration
++
+ 
+ @contextmanager
+ def conanfile_remove_attr(conanfile, names, method):
+@@ -88,19 +81,6 @@ def scoped_traceback(header_msg, exception, scope):
+     return ret
+ 
+ 
+-class ConanException(Exception):
+-    """ Generic conan exception """
+-    def __init__(self, msg=None, remote=None):
+-        self.remote = remote
+-        super().__init__(msg)
+-
+-    def __str__(self):
+-        msg = super().__str__()
+-        if self.remote:
+-            return f"{msg}. [Remote: {self.remote.name}]"
+-        return msg
+-
+-
+ class ConanReferenceDoesNotExistInDB(ConanException):
+     """ Reference does not exist in cache db """
+     pass
+@@ -115,18 +95,6 @@ class ConanConnectionError(ConanException):
+     pass
+ 
+ 
+-class ConanInvalidConfiguration(ConanException):
+-    """
+-    This binary, for the requested configuration and package-id cannot be built
+-    """
+-    pass
+-
+-
+-class ConanMigrationError(ConanException):
+-    pass
+-
+-
+-# Remote exceptions #
+ class InternalErrorException(ConanException):
+     """
+          Generic 500 error
+diff --git a/conan/internal/internal_tools.py b/conan/internal/internal_tools.py
+index 195b65a7647..ccf594e57ef 100644
+--- a/conan/internal/internal_tools.py
++++ b/conan/internal/internal_tools.py
+@@ -1,4 +1,4 @@
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ universal_arch_separator = '|'
+ 
+diff --git a/conan/internal/runner/docker.py b/conan/internal/runner/docker.py
+index b9f9ab8f1e4..5e57b066a19 100644
+--- a/conan/internal/runner/docker.py
++++ b/conan/internal/runner/docker.py
+@@ -9,7 +9,7 @@
+ from conan.api.conan_api import ConfigAPI
+ from conan.cli import make_abs_path
+ from conan.internal.runner import RunnerException
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.version import Version
+ 
+ 
+diff --git a/conan/internal/runner/ssh.py b/conan/internal/runner/ssh.py
+index 66aca5bd055..b6fb0ab0083 100644
+--- a/conan/internal/runner/ssh.py
++++ b/conan/internal/runner/ssh.py
+@@ -3,7 +3,7 @@
+ import tempfile
+ 
+ from conan.api.output import Color, ConanOutput
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ import os
+ from io import BytesIO
+diff --git a/conan/internal/runner/wsl.py b/conan/internal/runner/wsl.py
+index 3e4744b6225..4d42f97e5c3 100644
+--- a/conan/internal/runner/wsl.py
++++ b/conan/internal/runner/wsl.py
+@@ -1,6 +1,6 @@
+ from pathlib import PurePosixPath, PureWindowsPath, Path
+ from conan.api.output import Color, ConanOutput
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.util.runners import conan_run
+ from conans.client.subsystems import subsystem_path
+ from conan.tools.files import save
+@@ -61,7 +61,7 @@ def run(self):
+                 create_json_wsl = subsystem_path("wsl", create_json)
+                 pkglist_json = PureWindowsPath(tmp_dir).joinpath("pkglist.json").as_posix()
+                 pkglist_json_wsl = subsystem_path("wsl", pkglist_json)
+-                
++
+                 saved_cache = PureWindowsPath(tmp_dir).joinpath("saved_cache.tgz").as_posix()
+                 saved_cache_wsl = subsystem_path("wsl", saved_cache)
+                 conan_run(f"wsl.exe --cd {tmp_dir_wsl} -- CONAN_RUNNER_ENVIRONMENT=1 CONAN_HOME={self.remote_conan_home} {self.remote_conan} list --graph={create_json_wsl} --format=json > {pkglist_json}")
+@@ -89,7 +89,7 @@ def ensure_runner_environment(self):
+         self.remote_conan_home = conan_home
+ 
+         has_conan = conan_run(f"wsl.exe CONAN_HOME={conan_home.as_posix()} {remote_conan} --version", stdout=stdout, stderr=stderr) == 0
+-        
++
+         if not has_conan:
+             wsl_info("Bootstrapping Conan in remote")
+             conan_run(f"wsl.exe mkdir -p {remote_home}/.conan2remote")
+@@ -109,7 +109,7 @@ def ensure_runner_environment(self):
+         # If this command succeeds, great - if not because it already exists, ignore
+         conan_run(f"wsl.exe CONAN_HOME={conan_home.as_posix()} {remote_conan} profile detect", stdout=stdout, stderr=stderr)
+ 
+-       
++
+         conf_content = f"core.cache:storage_path={self.remote_conan_cache}\n"  if self.shared_cache else ""
+         with tempfile.TemporaryDirectory() as tmp:
+             global_conf = os.path.join(tmp, "global.conf")
+@@ -117,7 +117,7 @@ def ensure_runner_environment(self):
+             global_conf_wsl = subsystem_path("wsl", global_conf)
+             remote_global_conf = self.remote_conan_home.joinpath("global.conf")
+             conan_run(f"wsl.exe cp {global_conf_wsl} {remote_global_conf}")
+- 
++
+         self._copy_profiles()
+ 
+     def _copy_profiles(self):
+@@ -137,7 +137,7 @@ def _copy_profiles(self):
+                 save(None, path=outfile, content=contents)
+                 outfile_wsl = subsystem_path("wsl", outfile)
+                 remote_profile = self.remote_conan_home.joinpath("profiles").as_posix() + "/"
+-                
++
+                 # This works but copies the file with executable attribute
+                 conan_run(f"wsl.exe cp {outfile_wsl} {remote_profile}")
+ 
+diff --git a/conan/test/utils/artifactory.py b/conan/test/utils/artifactory.py
+index b3ab0fbe864..11e62ca0a53 100644
+--- a/conan/test/utils/artifactory.py
++++ b/conan/test/utils/artifactory.py
+@@ -4,7 +4,7 @@
+ 
+ import requests
+ 
+-from conans.errors import RecipeNotFoundException, PackageNotFoundException
++from conan.internal.errors import RecipeNotFoundException, PackageNotFoundException
+ from conans.server.revision_list import _RevisionEntry
+ 
+ ARTIFACTORY_DEFAULT_USER = os.getenv("ARTIFACTORY_DEFAULT_USER", "admin")
+diff --git a/conan/test/utils/mocks.py b/conan/test/utils/mocks.py
+index bfed795b61b..acdb379c032 100644
+--- a/conan/test/utils/mocks.py
++++ b/conan/test/utils/mocks.py
+@@ -3,7 +3,7 @@
+ 
+ from conan import ConanFile
+ from conan.internal.conan_app import ConanFileHelpers
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.conf import Conf
+ from conans.model.layout import Folders, Infos
+ from conans.model.options import Options
+diff --git a/conan/test/utils/test_files.py b/conan/test/utils/test_files.py
+index fa88b3bf2e2..d45701752c3 100644
+--- a/conan/test/utils/test_files.py
++++ b/conan/test/utils/test_files.py
+@@ -10,7 +10,7 @@
+ 
+ from conan.tools.files.files import untargz
+ from conans.client.subsystems import get_cased_path
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conan.internal.paths import PACKAGE_TGZ_NAME
+ from conans.util.files import gzopen_without_timestamps
+ 
+diff --git a/conan/test/utils/tools.py b/conan/test/utils/tools.py
+index a1f98a39a90..f86cc8ce3a7 100644
+--- a/conan/test/utils/tools.py
++++ b/conan/test/utils/tools.py
+@@ -32,7 +32,8 @@
+ from conan.api.model import Remote
+ from conan.cli.cli import Cli, _CONAN_INTERNAL_CUSTOM_COMMANDS_PATH
+ from conan.test.utils.env import environment_update
+-from conans.errors import NotFoundException, ConanException
++from conan.internal.errors import NotFoundException
++from conan.errors import ConanException
+ from conans.model.manifest import FileTreeManifest
+ from conans.model.package_ref import PkgReference
+ from conans.model.profile import Profile
+diff --git a/conan/tools/cmake/cmakedeps/templates/config_version.py b/conan/tools/cmake/cmakedeps/templates/config_version.py
+index 8fdaa234c57..db42be948a7 100644
+--- a/conan/tools/cmake/cmakedeps/templates/config_version.py
++++ b/conan/tools/cmake/cmakedeps/templates/config_version.py
+@@ -1,7 +1,7 @@
+ import textwrap
+ 
+ from conan.tools.cmake.cmakedeps.templates import CMakeDepsFileTemplate
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ """
+     foo-config-version.cmake
+diff --git a/conan/tools/files/copy_pattern.py b/conan/tools/files/copy_pattern.py
+index ef0796da0ff..93de39d1eac 100644
+--- a/conan/tools/files/copy_pattern.py
++++ b/conan/tools/files/copy_pattern.py
+@@ -3,7 +3,7 @@
+ import os
+ import shutil
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.util.files import mkdir
+ 
+ 
+diff --git a/conan/tools/gnu/gnutoolchain.py b/conan/tools/gnu/gnutoolchain.py
+index d154f1cfbf7..96d90db0df0 100644
+--- a/conan/tools/gnu/gnutoolchain.py
++++ b/conan/tools/gnu/gnutoolchain.py
+@@ -11,7 +11,7 @@
+ from conan.tools.env import Environment
+ from conan.tools.gnu.get_gnu_triplet import _get_gnu_triplet
+ from conan.tools.microsoft import VCVars, msvc_runtime_flag, unix_path, check_min_vs, is_msvc
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.pkg_type import PackageType
+ 
+ 
+diff --git a/conans/client/conanfile/build.py b/conans/client/conanfile/build.py
+index 9a69809b644..743be2885e6 100644
+--- a/conans/client/conanfile/build.py
++++ b/conans/client/conanfile/build.py
+@@ -1,4 +1,4 @@
+-from conans.errors import conanfile_exception_formatter
++from conan.internal.errors import conanfile_exception_formatter
+ from conans.util.files import chdir, mkdir
+ 
+ 
+diff --git a/conans/client/conanfile/configure.py b/conans/client/conanfile/configure.py
+index 4b0aa99f1eb..bf99cb0e7f8 100644
+--- a/conans/client/conanfile/configure.py
++++ b/conans/client/conanfile/configure.py
+@@ -1,4 +1,4 @@
+-from conans.errors import conanfile_exception_formatter
++from conan.internal.errors import conanfile_exception_formatter
+ from conans.model.pkg_type import PackageType
+ from conans.model.requires import BuildRequirements, TestRequirements, ToolRequirements
+ from conans.client.conanfile.implementations import auto_shared_fpic_config_options, \
+diff --git a/conans/client/conanfile/package.py b/conans/client/conanfile/package.py
+index 12745e6bd3d..dd90d313879 100644
+--- a/conans/client/conanfile/package.py
++++ b/conans/client/conanfile/package.py
+@@ -1,7 +1,8 @@
+ import os
+ 
+ from conan.api.output import ConanOutput
+-from conans.errors import ConanException, conanfile_exception_formatter, conanfile_remove_attr
++from conan.internal.errors import conanfile_remove_attr, conanfile_exception_formatter
++from conan.errors import ConanException
+ from conans.model.manifest import FileTreeManifest
+ from conans.model.package_ref import PkgReference
+ from conan.internal.paths import CONANINFO
+diff --git a/conans/client/downloaders/caching_file_downloader.py b/conans/client/downloaders/caching_file_downloader.py
+index e6921e15474..dc6f7f039d2 100644
+--- a/conans/client/downloaders/caching_file_downloader.py
++++ b/conans/client/downloaders/caching_file_downloader.py
+@@ -8,8 +8,8 @@
+ from conan.internal.cache.home_paths import HomePaths
+ from conans.client.downloaders.file_downloader import FileDownloader
+ from conans.client.downloaders.download_cache import DownloadCache
+-from conans.errors import NotFoundException, ConanException, AuthenticationException, \
+-    ForbiddenException
++from conan.internal.errors import AuthenticationException, ForbiddenException, NotFoundException
++from conan.errors import ConanException
+ from conans.util.files import mkdir, set_dirty_context_manager, remove_if_dirty, human_size
+ 
+ 
+diff --git a/conans/client/downloaders/download_cache.py b/conans/client/downloaders/download_cache.py
+index fb3e1663146..f38b3274634 100644
+--- a/conans/client/downloaders/download_cache.py
++++ b/conans/client/downloaders/download_cache.py
+@@ -4,7 +4,7 @@
+ from contextlib import contextmanager
+ from threading import Lock
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.util.dates import timestamp_now
+ from conans.util.files import load, save, remove_if_dirty
+ from conans.util.locks import simple_lock
+diff --git a/conans/client/downloaders/file_downloader.py b/conans/client/downloaders/file_downloader.py
+index 196a21005e1..c71f1455315 100644
+--- a/conans/client/downloaders/file_downloader.py
++++ b/conans/client/downloaders/file_downloader.py
+@@ -5,8 +5,9 @@
+ 
+ from conan.api.output import ConanOutput, TimedOutput
+ from conans.client.rest import response_to_str
+-from conans.errors import ConanException, NotFoundException, AuthenticationException, \
+-    ForbiddenException, ConanConnectionError, RequestErrorException
++from conan.internal.errors import ConanConnectionError, RequestErrorException, AuthenticationException, \
++    ForbiddenException, NotFoundException
++from conan.errors import ConanException
+ from conans.util.files import human_size, check_with_algorithm_sum
+ 
+ 
+@@ -83,7 +84,7 @@ def _download_file(self, url, auth, headers, file_path, verify_ssl, try_resume=F
+             if response.status_code == 404:
+                 raise NotFoundException("Not found: %s" % url)
+             elif response.status_code == 403:
+-                if auth is None or (hasattr(auth, "token") and auth.token is None):
++                if auth is None or (hasattr(auth, "bearer") and auth.bearer is None):
+                     # TODO: This is a bit weird, why this conversion? Need to investigate
+                     raise AuthenticationException(response_to_str(response))
+                 raise ForbiddenException(response_to_str(response))
+diff --git a/conans/client/graph/build_mode.py b/conans/client/graph/build_mode.py
+index 8efbd99da3b..52d7e37c880 100644
+--- a/conans/client/graph/build_mode.py
++++ b/conans/client/graph/build_mode.py
+@@ -1,4 +1,4 @@
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import ref_matches
+ 
+ 
+diff --git a/conans/client/graph/compatibility.py b/conans/client/graph/compatibility.py
+index 4961c28c0dd..85e61550259 100644
+--- a/conans/client/graph/compatibility.py
++++ b/conans/client/graph/compatibility.py
+@@ -4,7 +4,8 @@
+ from conan.internal.cache.home_paths import HomePaths
+ from conans.client.graph.compute_pid import run_validate_package_id
+ from conans.client.loader import load_python_file
+-from conans.errors import conanfile_exception_formatter, ConanException, scoped_traceback
++from conan.internal.errors import conanfile_exception_formatter, scoped_traceback
++from conan.errors import ConanException
+ 
+ # TODO: Define other compatibility besides applications
+ _default_compat = """\
+diff --git a/conans/client/graph/compute_pid.py b/conans/client/graph/compute_pid.py
+index 4ba62318550..9aa690bb908 100644
+--- a/conans/client/graph/compute_pid.py
++++ b/conans/client/graph/compute_pid.py
+@@ -1,7 +1,7 @@
+ from collections import OrderedDict
+ 
+-from conans.errors import conanfile_exception_formatter, ConanInvalidConfiguration, \
+-    conanfile_remove_attr, ConanException
++from conan.internal.errors import conanfile_remove_attr, conanfile_exception_formatter
++from conan.errors import ConanException, ConanInvalidConfiguration
+ from conans.model.info import ConanInfo, RequirementsInfo, RequirementInfo, PythonRequiresInfo
+ from conans.client.conanfile.implementations import auto_header_only_package_id
+ 
+diff --git a/conans/client/graph/graph_binaries.py b/conans/client/graph/graph_binaries.py
+index 3fae7fc3ee9..7d1438540de 100644
+--- a/conans/client/graph/graph_binaries.py
++++ b/conans/client/graph/graph_binaries.py
+@@ -13,8 +13,9 @@
+                                        BINARY_INVALID, BINARY_EDITABLE_BUILD, RECIPE_PLATFORM,
+                                        BINARY_PLATFORM)
+ from conans.client.graph.proxy import should_update_reference
+-from conans.errors import NotFoundException, \
+-    PackageNotFoundException, conanfile_exception_formatter, ConanConnectionError, ConanException
++from conan.internal.errors import conanfile_exception_formatter, ConanConnectionError, NotFoundException, \
++    PackageNotFoundException
++from conan.errors import ConanException
+ from conans.model.info import RequirementInfo, RequirementsInfo
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+diff --git a/conans/client/graph/graph_builder.py b/conans/client/graph/graph_builder.py
+index a442fa4a135..4a8f8d15da9 100644
+--- a/conans/client/graph/graph_builder.py
++++ b/conans/client/graph/graph_builder.py
+@@ -11,7 +11,7 @@
+     GraphRuntimeError, GraphError
+ from conans.client.graph.profile_node_definer import initialize_conanfile_profile
+ from conans.client.graph.provides import check_graph_provides
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.conan_file import ConanFile
+ from conans.model.options import Options, _PackageOptions
+ from conans.model.pkg_type import PackageType
+diff --git a/conans/client/graph/graph_error.py b/conans/client/graph/graph_error.py
+index a438b87be41..d04373ae19e 100644
+--- a/conans/client/graph/graph_error.py
++++ b/conans/client/graph/graph_error.py
+@@ -1,4 +1,4 @@
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ class GraphError(ConanException):
+diff --git a/conans/client/graph/install_graph.py b/conans/client/graph/install_graph.py
+index 63221cc3238..cc7db6587c2 100644
+--- a/conans/client/graph/install_graph.py
++++ b/conans/client/graph/install_graph.py
+@@ -1,11 +1,12 @@
+ import json
+ import os
++import shlex
+ import textwrap
+ 
+ from conan.api.output import ConanOutput
+ from conans.client.graph.graph import RECIPE_CONSUMER, RECIPE_VIRTUAL, BINARY_SKIP, \
+     BINARY_MISSING, BINARY_INVALID, Overrides, BINARY_BUILD, BINARY_EDITABLE_BUILD, BINARY_PLATFORM
+-from conans.errors import ConanInvalidConfiguration, ConanException
++from conan.errors import ConanException, ConanInvalidConfiguration
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ from conans.util.files import load
+@@ -72,7 +73,8 @@ def _build_args(self):
+         compatible = "compatible:" if self.info and self.info.get("compatibility_delta") else ""
+         cmd += f" --build={compatible}{self.ref}"
+         if self.options:
+-            cmd += " " + " ".join(f"-o {o}" for o in self.options)
++            scope = "" if self.context == "host" else ":b"
++            cmd += " " + " ".join(f'-o{scope}="{o}"' for o in self.options)
+         if self.overrides:
+             cmd += f' --lockfile-overrides="{self.overrides}"'
+         return cmd
+@@ -283,7 +285,8 @@ def _build_args(self):
+         compatible = "compatible:" if self.info and self.info.get("compatibility_delta") else ""
+         cmd += f" --build={compatible}{self.ref}"
+         if self.options:
+-            cmd += " " + " ".join(f"-o {o}" for o in self.options)
++            scope = "" if self.context == "host" else ":b"
++            cmd += " " + " ".join(f'-o{scope}="{o}"' for o in self.options)
+         if self.overrides:
+             cmd += f' --lockfile-overrides="{self.overrides}"'
+         return cmd
+diff --git a/conans/client/graph/profile_node_definer.py b/conans/client/graph/profile_node_definer.py
+index 2b905ef0c64..fb4c4a4a4be 100644
+--- a/conans/client/graph/profile_node_definer.py
++++ b/conans/client/graph/profile_node_definer.py
+@@ -1,5 +1,5 @@
+ from conans.client.graph.graph import CONTEXT_BUILD
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import ref_matches
+ 
+ 
+diff --git a/conans/client/graph/proxy.py b/conans/client/graph/proxy.py
+index 1621176b618..d7a364f976d 100644
+--- a/conans/client/graph/proxy.py
++++ b/conans/client/graph/proxy.py
+@@ -3,7 +3,8 @@
+ from conans.client.graph.graph import (RECIPE_DOWNLOADED, RECIPE_INCACHE, RECIPE_NEWER,
+                                        RECIPE_NOT_IN_REMOTE, RECIPE_UPDATED, RECIPE_EDITABLE,
+                                        RECIPE_INCACHE_DATE_UPDATED, RECIPE_UPDATEABLE)
+-from conans.errors import ConanException, NotFoundException
++from conan.internal.errors import NotFoundException
++from conan.errors import ConanException
+ 
+ 
+ class ConanProxy:
+diff --git a/conans/client/graph/python_requires.py b/conans/client/graph/python_requires.py
+index a861e53df44..b9542ef5f33 100644
+--- a/conans/client/graph/python_requires.py
++++ b/conans/client/graph/python_requires.py
+@@ -1,6 +1,6 @@
+ import os
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import RecipeReference
+ from conans.model.requires import Requirement
+ 
+diff --git a/conans/client/graph/range_resolver.py b/conans/client/graph/range_resolver.py
+index 31df11c37d7..bd21c44d1c1 100644
+--- a/conans/client/graph/range_resolver.py
++++ b/conans/client/graph/range_resolver.py
+@@ -1,5 +1,5 @@
+ from conans.client.graph.proxy import should_update_reference
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import RecipeReference
+ from conans.model.version_range import VersionRange
+ 
+diff --git a/conans/client/hook_manager.py b/conans/client/hook_manager.py
+index 2df571f4204..d213b209d95 100644
+--- a/conans/client/hook_manager.py
++++ b/conans/client/hook_manager.py
+@@ -1,7 +1,7 @@
+ import os
+ 
+ from conans.client.loader import load_python_file
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ valid_hook_methods = ["pre_export", "post_export",
+                       "pre_source", "post_source",
+diff --git a/conans/client/installer.py b/conans/client/installer.py
+index b2937dda895..bdeb24efe63 100644
+--- a/conans/client/installer.py
++++ b/conans/client/installer.py
+@@ -10,7 +10,8 @@
+     BINARY_UPDATE, BINARY_EDITABLE_BUILD, BINARY_SKIP
+ from conans.client.graph.install_graph import InstallGraph
+ from conans.client.source import retrieve_exports_sources, config_source
+-from conans.errors import (ConanException, conanfile_exception_formatter, conanfile_remove_attr)
++from conan.internal.errors import conanfile_remove_attr, conanfile_exception_formatter
++from conan.errors import ConanException
+ from conans.model.build_info import CppInfo, MockInfoProperty
+ from conans.model.package_ref import PkgReference
+ from conan.internal.paths import CONANINFO
+diff --git a/conans/client/loader.py b/conans/client/loader.py
+index c5760f68cf3..ecad2857272 100644
+--- a/conans/client/loader.py
++++ b/conans/client/loader.py
+@@ -16,7 +16,8 @@
+ from conan.tools.google import bazel_layout
+ from conan.tools.microsoft import vs_layout
+ from conans.client.loader_txt import ConanFileTextLoader
+-from conans.errors import ConanException, NotFoundException, conanfile_exception_formatter
++from conan.internal.errors import conanfile_exception_formatter, NotFoundException
++from conan.errors import ConanException
+ from conans.model.conan_file import ConanFile
+ from conans.model.options import Options
+ from conans.model.recipe_ref import RecipeReference
+diff --git a/conans/client/loader_txt.py b/conans/client/loader_txt.py
+index 3e33e06f9c1..10e70b3eafc 100644
+--- a/conans/client/loader_txt.py
++++ b/conans/client/loader_txt.py
+@@ -1,4 +1,4 @@
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.util.config_parser import ConfigParser
+ 
+ 
+diff --git a/conans/client/remote_manager.py b/conans/client/remote_manager.py
+index 9aea240a685..e5d2defd752 100644
+--- a/conans/client/remote_manager.py
++++ b/conans/client/remote_manager.py
+@@ -10,8 +10,8 @@
+ from conan.api.output import ConanOutput
+ from conan.internal.cache.conan_reference_layout import METADATA
+ from conans.client.pkg_sign import PkgSignaturesPlugin
+-from conans.errors import ConanConnectionError, ConanException, NotFoundException, \
+-    PackageNotFoundException
++from conan.internal.errors import ConanConnectionError, NotFoundException, PackageNotFoundException
++from conan.errors import ConanException
+ from conans.model.info import load_binary_info
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+diff --git a/conans/client/rest/auth_manager.py b/conans/client/rest/auth_manager.py
+index e241e9f8b91..525de701af7 100644
+--- a/conans/client/rest/auth_manager.py
++++ b/conans/client/rest/auth_manager.py
+@@ -7,14 +7,14 @@
+ Flow:
+     Directly invoke a REST method in RestApiClient, example: get_conan.
+     if receives AuthenticationException (not open method) will ask user for login and password
+-    and will invoke RestApiClient.get_token() (with LOGIN_RETRIES retries) and retry to call
+-    get_conan with the new token.
++    (with LOGIN_RETRIES retries) and retry to call with the new token.
+ """
+ 
+ from conan.api.output import ConanOutput
+ from conans.client.rest.remote_credentials import RemoteCredentials
+ from conans.client.rest.rest_client import RestApiClient
+-from conans.errors import AuthenticationException, ConanException, ForbiddenException
++from conan.internal.errors import AuthenticationException, ForbiddenException
++from conan.errors import ConanException
+ 
+ LOGIN_RETRIES = 3
+ 
+@@ -59,18 +59,10 @@ def call_rest_api_method(self, remote, method_name, *args, **kwargs):
+             raise ForbiddenException(f"Permission denied for user: '{user}': {e}")
+         except AuthenticationException:
+             # User valid but not enough permissions
+-            if user is None or token is None:
+-                # token is None when you change user with user command
+-                # Anonymous is not enough, ask for a user
+-                ConanOutput().info('Please log in to "%s" to perform this action. '
+-                                   'Execute "conan remote login" command.' % remote.name)
+-                if self._get_credentials_and_authenticate(rest_client, user, remote):
+-                    return self.call_rest_api_method(remote, method_name, *args, **kwargs)
+-            else:
+-                # Token expired or not valid, so clean the token and repeat the call
+-                # (will be anonymous call but exporting who is calling)
+-                # logger.info("Token expired or not valid, cleaning the saved token and retrying")
+-                self._clear_user_tokens_in_db(user, remote)
++            # token is None when you change user with user command
++            # Anonymous is not enough, ask for a user
++            ConanOutput().info(f"Remote '{remote.name}' needs authentication, obtaining credentials")
++            if self._get_credentials_and_authenticate(rest_client, user, remote):
+                 return self.call_rest_api_method(remote, method_name, *args, **kwargs)
+ 
+     def _get_credentials_and_authenticate(self, rest_client, user, remote):
+@@ -94,14 +86,6 @@ def _get_credentials_and_authenticate(self, rest_client, user, remote):
+                 return True
+         raise AuthenticationException("Too many failed login attempts, bye!")
+ 
+-    def _clear_user_tokens_in_db(self, user, remote):
+-        try:
+-            self._creds.set(remote, user, token=None)
+-        except Exception as e:
+-            out = ConanOutput()
+-            out.error('Your credentials could not be stored in local cache', error_type="exception")
+-            out.debug(str(e) + '\n')
+-
+     def _authenticate(self, rest_client, remote, user, password):
+         try:
+             token = rest_client.authenticate(user, password)
+diff --git a/conans/client/rest/conan_requester.py b/conans/client/rest/conan_requester.py
+index 73974a79c4e..7b7762c7c9c 100644
+--- a/conans/client/rest/conan_requester.py
++++ b/conans/client/rest/conan_requester.py
+@@ -13,7 +13,8 @@
+ 
+ from conans import __version__ as client_version
+ from conans.client.loader import load_python_file
+-from conans.errors import ConanException, scoped_traceback
++from conan.internal.errors import scoped_traceback
++from conan.errors import ConanException
+ 
+ # Capture SSL warnings as pointed out here:
+ # https://urllib3.readthedocs.org/en/latest/security.html#insecureplatformwarning
+diff --git a/conans/client/rest/file_uploader.py b/conans/client/rest/file_uploader.py
+index 1eadc2e6ecc..429150581b0 100644
+--- a/conans/client/rest/file_uploader.py
++++ b/conans/client/rest/file_uploader.py
+@@ -3,8 +3,9 @@
+ 
+ from conan.api.output import ConanOutput, TimedOutput
+ from conans.client.rest import response_to_str
+-from conans.errors import AuthenticationException, ConanException, \
+-    NotFoundException, ForbiddenException, RequestErrorException, InternalErrorException
++from conan.internal.errors import InternalErrorException, RequestErrorException, AuthenticationException, \
++    ForbiddenException, NotFoundException
++from conan.errors import ConanException
+ from conans.util.files import sha1sum
+ 
+ 
+@@ -25,7 +26,7 @@ def _handle_400_response(response, auth):
+             raise AuthenticationException(response_to_str(response))
+ 
+         if response.status_code == 403:
+-            if auth is None or auth.token is None:
++            if auth is None or auth.bearer is None:
+                 raise AuthenticationException(response_to_str(response))
+             raise ForbiddenException(response_to_str(response))
+ 
+diff --git a/conans/client/rest/remote_credentials.py b/conans/client/rest/remote_credentials.py
+index ad001a5767f..c1107f192b9 100644
+--- a/conans/client/rest/remote_credentials.py
++++ b/conans/client/rest/remote_credentials.py
+@@ -9,7 +9,8 @@
+ from conans.client.loader import load_python_file
+ from conan.api.output import ConanOutput
+ from conans.client.userio import UserInput
+-from conans.errors import ConanException, scoped_traceback
++from conan.internal.errors import scoped_traceback
++from conan.errors import ConanException
+ from conans.util.files import load
+ 
+ 
+diff --git a/conans/client/rest/rest_client.py b/conans/client/rest/rest_client.py
+index e2dcf1714ef..27099a3f09e 100644
+--- a/conans/client/rest/rest_client.py
++++ b/conans/client/rest/rest_client.py
+@@ -1,6 +1,6 @@
+ from conans import CHECKSUM_DEPLOY, REVISIONS
+ from conans.client.rest.rest_client_v2 import RestV2Methods
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ class RestApiClient:
+diff --git a/conans/client/rest/rest_client_v2.py b/conans/client/rest/rest_client_v2.py
+index b5b74255e68..e4ffe9a8234 100644
+--- a/conans/client/rest/rest_client_v2.py
++++ b/conans/client/rest/rest_client_v2.py
+@@ -13,8 +13,9 @@
+ from conans.client.rest import response_to_str
+ from conans.client.rest.client_routes import ClientV2Router
+ from conans.client.rest.file_uploader import FileUploader
+-from conans.errors import ConanException, NotFoundException, PackageNotFoundException, \
+-    RecipeNotFoundException, AuthenticationException, ForbiddenException, EXCEPTION_CODE_MAPPING
++from conan.internal.errors import AuthenticationException, ForbiddenException, NotFoundException, \
++    RecipeNotFoundException, PackageNotFoundException, EXCEPTION_CODE_MAPPING
++from conan.errors import ConanException
+ from conans.model.package_ref import PkgReference
+ from conan.internal.paths import EXPORT_SOURCES_TGZ_NAME
+ from conans.model.recipe_ref import RecipeReference
+diff --git a/conans/client/rest_client_local_recipe_index.py b/conans/client/rest_client_local_recipe_index.py
+index 39de3550866..2514b091d54 100644
+--- a/conans/client/rest_client_local_recipe_index.py
++++ b/conans/client/rest_client_local_recipe_index.py
+@@ -11,8 +11,9 @@
+ from conan.internal.cache.home_paths import HomePaths
+ from conan.internal.api.export import cmd_export
+ from conans.client.loader import ConanFileLoader
+-from conans.errors import ConanException, PackageNotFoundException, RecipeNotFoundException, \
+-    ConanReferenceDoesNotExistInDB, NotFoundException
++from conan.internal.errors import ConanReferenceDoesNotExistInDB, NotFoundException, RecipeNotFoundException, \
++    PackageNotFoundException
++from conan.errors import ConanException
+ from conans.model.conf import ConfDefinition
+ from conans.model.recipe_ref import RecipeReference
+ from conans.util.files import load, save, rmdir, copytree_compat
+diff --git a/conans/client/source.py b/conans/client/source.py
+index 6c761724286..9b0aee5b04e 100644
+--- a/conans/client/source.py
++++ b/conans/client/source.py
+@@ -2,8 +2,8 @@
+ 
+ from conan.api.output import ConanOutput
+ from conan.tools.env import VirtualBuildEnv
+-from conans.errors import ConanException, conanfile_exception_formatter, NotFoundException, \
+-    conanfile_remove_attr
++from conan.internal.errors import conanfile_remove_attr, conanfile_exception_formatter, NotFoundException
++from conan.errors import ConanException
+ from conans.util.files import (is_dirty, mkdir, rmdir, set_dirty_context_manager,
+                                merge_directories, clean_dirty, chdir)
+ 
+diff --git a/conans/client/subsystems.py b/conans/client/subsystems.py
+index 39654b14719..e5fe65eaf37 100644
+--- a/conans/client/subsystems.py
++++ b/conans/client/subsystems.py
+@@ -24,7 +24,7 @@
+ import re
+ 
+ from conan.tools.build import cmd_args_to_string
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ WINDOWS = "windows"
+ MSYS2 = 'msys2'
+diff --git a/conans/client/userio.py b/conans/client/userio.py
+index 33c9628ff49..bb1175e3dd1 100644
+--- a/conans/client/userio.py
++++ b/conans/client/userio.py
+@@ -2,7 +2,7 @@
+ import os
+ import sys
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ def is_terminal(stream):
+diff --git a/conans/migrations.py b/conans/migrations.py
+index c455a0bb42b..b47d8a6ef76 100644
+--- a/conans/migrations.py
++++ b/conans/migrations.py
+@@ -3,7 +3,7 @@
+ from conan import conan_version
+ from conan.api.output import ConanOutput
+ from conans.client.loader import load_python_file
+-from conans.errors import ConanException, ConanMigrationError
++from conan.errors import ConanException, ConanMigrationError
+ from conans.model.version import Version
+ from conans.util.files import load, save
+ 
+diff --git a/conans/model/build_info.py b/conans/model/build_info.py
+index 4e2523f9a41..e966962835d 100644
+--- a/conans/model/build_info.py
++++ b/conans/model/build_info.py
+@@ -1,10 +1,12 @@
+ import copy
++import glob
+ import json
+ import os
+ from collections import OrderedDict, defaultdict
+ 
+ from conan.api.output import ConanOutput
+-from conans.errors import ConanException
++from conan.errors import ConanException
++from conans.model.pkg_type import PackageType
+ from conans.util.files import load, save
+ 
+ _DIRS_VAR_NAMES = ["_includedirs", "_srcdirs", "_libdirs", "_resdirs", "_bindirs", "_builddirs",
+@@ -93,6 +95,11 @@ def __init__(self, set_defaults=False):
+             self.libdirs = ["lib"]
+             self.bindirs = ["bin"]
+ 
++        # CPS
++        self._type = None
++        self._location = None
++        self._link_location = None
++
+     def serialize(self):
+         return {
+             "includedirs": self._includedirs,
+@@ -114,7 +121,13 @@ def serialize(self):
+             "sysroot": self._sysroot,
+             "requires": self._requires,
+             "properties": self._properties,
++<<<<<<< HEAD
+             "exe": self.exe,
++=======
++            "type": self._type,
++            "location": self._location,
++            "link_location": self._link_location
++>>>>>>> develop2
+         }
+ 
+     @staticmethod
+@@ -245,22 +258,36 @@ def frameworks(self, value):
+     def libs(self):
+         if self._libs is None:
+             self._libs = []
+-        if isinstance(self._libs, dict):
+-            return [self._libs.keys()]  # Return a list to not break any interface
+-        return self._libs
+-
+-    @property
+-    def full_libs(self):
+-        if self._libs is None:
+-            self._libs = []
+-        if isinstance(self._libs, list):
+-            return {k: {} for k in self._libs}
+         return self._libs
+ 
+     @libs.setter
+     def libs(self, value):
+         self._libs = value
+ 
++    @property
++    def type(self):
++        return self._type
++
++    @type.setter
++    def type(self, value):
++        self._type = value
++
++    @property
++    def location(self):
++        return self._location
++
++    @location.setter
++    def location(self, value):
++        self._location = value
++
++    @property
++    def link_location(self):
++        return self._link_location
++
++    @link_location.setter
++    def link_location(self, value):
++        self._link_location = value
++
+     @property
+     def defines(self):
+         if self._defines is None:
+@@ -432,6 +459,67 @@ def relocate(el):
+     def parsed_requires(self):
+         return [r.split("::", 1) if "::" in r else (None, r) for r in self.requires]
+ 
++    def deduce_cps(self, pkg_type):
++        if self._location or self._link_location:
++            if self._type is None or self._type is PackageType.HEADER:
++                raise ConanException("Incorrect cpp_info defining location without type or header")
++            return
++        if self._type not in [None, PackageType.SHARED, PackageType.STATIC, PackageType.APP]:
++            return
++
++        # Recipe didn't specify things, need to auto deduce
++        libdirs = [x.replace("\\", "/") for x in self.libdirs]
++        bindirs = [x.replace("\\", "/") for x in self.bindirs]
++
++        if len(self.libs) != 1:
++            raise ConanException("More than 1 library defined in cpp_info.libs, cannot deduce CPS")
++
++        # TODO: Do a better handling of pre-defined type
++        libname = self.libs[0]
++        static_patterns = [f"{libname}.lib", f"{libname}.a", f"lib{libname}.a"]
++        shared_patterns = [f"lib{libname}.so", f"lib{libname}.so.*", f"lib{libname}.dylib",
++                           f"lib{libname}.*dylib"]
++        dll_patterns = [f"{libname}.dll"]
++
++        def _find_matching(patterns, dirs):
++            matches = set()
++            for pattern in patterns:
++                for d in dirs:
++                    matches.update(glob.glob(f"{d}/{pattern}"))
++            if len(matches) == 1:
++                return next(iter(matches))
++
++        static_location = _find_matching(static_patterns, libdirs)
++        shared_location = _find_matching(shared_patterns, libdirs)
++        dll_location = _find_matching(dll_patterns, bindirs)
++        if static_location:
++            if shared_location:
++                ConanOutput().warning(f"Lib {libname} has both static {static_location} and "
++                                      f"shared {shared_location} in the same package")
++                if pkg_type is PackageType.STATIC:
++                    self._location = static_location
++                    self._type = PackageType.STATIC
++                else:
++                    self._location = shared_location
++                    self._type = PackageType.SHARED
++            elif dll_location:
++                self._location = dll_location
++                self._link_location = static_location
++                self._type = PackageType.SHARED
++            else:
++                self._location = static_location
++                self._type = PackageType.STATIC
++        elif shared_location:
++            self._location = shared_location
++            self._type = PackageType.SHARED
++        elif dll_location:
++            # Only .dll but no link library
++            self._location = dll_location
++            self._type = PackageType.SHARED
++        if self._type != pkg_type:
++            ConanOutput().warning(f"Lib {libname} deduced as '{self._type}, "
++                                  f"but 'package_type={pkg_type}'")
++
+ 
+ class CppInfo:
+ 
+diff --git a/conans/model/conan_file.py b/conans/model/conan_file.py
+index 50cecb9b01e..f61cee57d38 100644
+--- a/conans/model/conan_file.py
++++ b/conans/model/conan_file.py
+@@ -3,7 +3,7 @@
+ 
+ from conan.api.output import ConanOutput, Color
+ from conans.client.subsystems import command_env_wrapper
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.build_info import MockInfoProperty
+ from conans.model.conf import Conf
+ from conans.model.dependencies import ConanFileDependencies
+diff --git a/conans/model/conf.py b/conans/model/conf.py
+index bd5da94e7dd..15be356a1ec 100644
+--- a/conans/model/conf.py
++++ b/conans/model/conf.py
+@@ -6,7 +6,7 @@
+ 
+ from collections import OrderedDict
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import ref_matches
+ 
+ BUILT_IN_CONFS = {
+diff --git a/conans/model/dependencies.py b/conans/model/dependencies.py
+index a2734b5e874..44a52125b1d 100644
+--- a/conans/model/dependencies.py
++++ b/conans/model/dependencies.py
+@@ -1,7 +1,7 @@
+ from collections import OrderedDict
+ 
+ from conans.client.graph.graph import RECIPE_PLATFORM
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import RecipeReference
+ from conans.model.conanfile_interface import ConanFileInterface
+ 
+diff --git a/conans/model/graph_lock.py b/conans/model/graph_lock.py
+index e3c3fa9dcb8..b6272acc084 100644
+--- a/conans/model/graph_lock.py
++++ b/conans/model/graph_lock.py
+@@ -5,7 +5,7 @@
+ 
+ from conan.api.output import ConanOutput
+ from conans.client.graph.graph import RECIPE_VIRTUAL, RECIPE_CONSUMER, CONTEXT_BUILD, Overrides
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import RecipeReference
+ from conans.model.version_range import VersionRange
+ from conans.util.files import load, save
+diff --git a/conans/model/info.py b/conans/model/info.py
+index 630f1310427..c22c310139e 100644
+--- a/conans/model/info.py
++++ b/conans/model/info.py
+@@ -1,6 +1,6 @@
+ import hashlib
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.dependencies import UserRequirementsDict
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference, Version
+diff --git a/conans/model/options.py b/conans/model/options.py
+index cbf6eaf83da..82ce0ba753b 100644
+--- a/conans/model/options.py
++++ b/conans/model/options.py
+@@ -1,4 +1,4 @@
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import ref_matches
+ 
+ _falsey_options = ["false", "none", "0", "off", ""]
+diff --git a/conans/model/package_ref.py b/conans/model/package_ref.py
+index da1ea5e0b7e..2980f71a281 100644
+--- a/conans/model/package_ref.py
++++ b/conans/model/package_ref.py
+@@ -1,4 +1,4 @@
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import RecipeReference
+ from conans.util.dates import timestamp_to_str
+ 
+diff --git a/conans/model/pkg_type.py b/conans/model/pkg_type.py
+index 5d51d0488a3..29c207952c5 100644
+--- a/conans/model/pkg_type.py
++++ b/conans/model/pkg_type.py
+@@ -1,6 +1,6 @@
+ from enum import Enum
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ class PackageType(Enum):
+diff --git a/conans/model/recipe_ref.py b/conans/model/recipe_ref.py
+index ca58c598411..6165ec4c9c1 100644
+--- a/conans/model/recipe_ref.py
++++ b/conans/model/recipe_ref.py
+@@ -3,7 +3,7 @@
+ import re
+ from functools import total_ordering
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.version import Version
+ from conans.util.dates import timestamp_to_str
+ 
+@@ -120,7 +120,7 @@ def loads(rref):
+                 user = channel = None
+             return RecipeReference(name, version, user, channel, revision, timestamp)
+         except Exception:
+-            from conans.errors import ConanException
++            from conan.errors import ConanException
+             raise ConanException(
+                 f"{rref} is not a valid recipe reference, provide a reference"
+                 f" in the form name/version[@user/channel]")
+diff --git a/conans/model/requires.py b/conans/model/requires.py
+index 7b312b40ee0..d9a9dbc7646 100644
+--- a/conans/model/requires.py
++++ b/conans/model/requires.py
+@@ -1,6 +1,6 @@
+ from collections import OrderedDict
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.pkg_type import PackageType
+ from conans.model.recipe_ref import RecipeReference
+ from conans.model.version_range import VersionRange
+diff --git a/conans/model/settings.py b/conans/model/settings.py
+index 2c56f7a3841..ed1c1ef42c6 100644
+--- a/conans/model/settings.py
++++ b/conans/model/settings.py
+@@ -1,7 +1,7 @@
+ import yaml
+ 
+ from conan.internal.internal_tools import is_universal_arch
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ def bad_value_msg(name, value, value_range):
+diff --git a/conans/model/version.py b/conans/model/version.py
+index 42d866b4361..dd87b3586c5 100644
+--- a/conans/model/version.py
++++ b/conans/model/version.py
+@@ -1,6 +1,6 @@
+ from functools import total_ordering
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ @total_ordering
+diff --git a/conans/model/version_range.py b/conans/model/version_range.py
+index 106682f25dc..ee4e5906ca5 100644
+--- a/conans/model/version_range.py
++++ b/conans/model/version_range.py
+@@ -1,7 +1,7 @@
+ from functools import total_ordering
+ from typing import Optional
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import Version
+ from conans import __version__ as client_version
+ 
+@@ -66,6 +66,10 @@ class _ConditionSet:
+ 
+     def __init__(self, expression, prerelease):
+         expressions = expression.split()
++        if not expressions:
++            # Guarantee at least one expression
++            expressions = [""]
++
+         self.prerelease = prerelease
+         self.conditions = []
+         for e in expressions:
+diff --git a/conans/server/conf/__init__.py b/conans/server/conf/__init__.py
+index 44a4e4029fa..a70911ec8ce 100644
+--- a/conans/server/conf/__init__.py
++++ b/conans/server/conf/__init__.py
+@@ -8,7 +8,7 @@
+ from datetime import timedelta
+ from configparser import ConfigParser, NoSectionError
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.server.conf.default_server_conf import default_server_conf
+ from conans.server.store.disk_adapter import ServerDiskAdapter
+ from conans.server.store.server_store import ServerStore
+diff --git a/conans/server/rest/api_v2.py b/conans/server/rest/api_v2.py
+index 680f20ff42a..f4e5ec86609 100644
+--- a/conans/server/rest/api_v2.py
++++ b/conans/server/rest/api_v2.py
+@@ -1,6 +1,6 @@
+ from bottle import Bottle
+ 
+-from conans.errors import EXCEPTION_CODE_MAPPING
++from conan.internal.errors import EXCEPTION_CODE_MAPPING
+ from conans.server.rest.bottle_plugins.http_basic_authentication import HttpBasicAuthentication
+ from conans.server.rest.bottle_plugins.jwt_authentication import JWTAuthentication
+ from conans.server.rest.bottle_plugins.return_handler import ReturnHandlerPlugin
+diff --git a/conans/server/rest/bottle_plugins/return_handler.py b/conans/server/rest/bottle_plugins/return_handler.py
+index 5ae25971c64..31d75c814b8 100644
+--- a/conans/server/rest/bottle_plugins/return_handler.py
++++ b/conans/server/rest/bottle_plugins/return_handler.py
+@@ -1,6 +1,6 @@
+ from bottle import HTTPResponse
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ class ReturnHandlerPlugin(object):
+diff --git a/conans/server/rest/controller/v2/conan.py b/conans/server/rest/controller/v2/conan.py
+index 4d1594a971b..29c80770ac3 100644
+--- a/conans/server/rest/controller/v2/conan.py
++++ b/conans/server/rest/controller/v2/conan.py
+@@ -1,6 +1,6 @@
+ from bottle import request
+ 
+-from conans.errors import NotFoundException
++from conan.internal.errors import NotFoundException
+ from conans.model.recipe_ref import RecipeReference
+ from conans.server.rest.bottle_routes import BottleRoutes
+ from conans.server.rest.controller.v2 import get_package_ref
+diff --git a/conans/server/rest/controller/v2/users.py b/conans/server/rest/controller/v2/users.py
+index 30f3624d044..378df02f1d0 100644
+--- a/conans/server/rest/controller/v2/users.py
++++ b/conans/server/rest/controller/v2/users.py
+@@ -1,6 +1,6 @@
+ from bottle import response
+ 
+-from conans.errors import AuthenticationException
++from conan.internal.errors import AuthenticationException
+ 
+ from conans.server.rest.bottle_routes import BottleRoutes
+ from conans.server.service.user_service import UserService
+diff --git a/conans/server/service/authorize.py b/conans/server/service/authorize.py
+index 7a40300b120..67150205f25 100644
+--- a/conans/server/service/authorize.py
++++ b/conans/server/service/authorize.py
+@@ -11,8 +11,7 @@
+ 
+ from abc import ABCMeta, abstractmethod
+ 
+-from conans.errors import AuthenticationException, ForbiddenException, InternalErrorException
+-
++from conan.internal.errors import InternalErrorException, AuthenticationException, ForbiddenException
+ 
+ #  ############################################
+ #  ############ ABSTRACT CLASSES ##############
+@@ -128,9 +127,6 @@ def check_read_conan(self, username, ref):
+         username: User that request to read the conans
+         ref: RecipeReference
+         """
+-        if ref.user == username:
+-            return
+-
+         self._check_any_rule_ok(username, self.read_permissions, ref)
+ 
+     def check_write_conan(self, username, ref):
+@@ -138,9 +134,6 @@ def check_write_conan(self, username, ref):
+         username: User that request to write the conans
+         ref: RecipeReference
+         """
+-        if ref.user == username:
+-            return True
+-
+         self._check_any_rule_ok(username, self.write_permissions, ref)
+ 
+     def check_delete_conan(self, username, ref):
+diff --git a/conans/server/service/user_service.py b/conans/server/service/user_service.py
+index 623e0c8758c..e4e58fd062e 100644
+--- a/conans/server/service/user_service.py
++++ b/conans/server/service/user_service.py
+@@ -1,4 +1,4 @@
+-from conans.errors import AuthenticationException
++from conan.internal.errors import AuthenticationException
+ 
+ 
+ class UserService(object):
+diff --git a/conans/server/service/v2/search.py b/conans/server/service/v2/search.py
+index d4ce88a32c3..079f1b37d51 100644
+--- a/conans/server/service/v2/search.py
++++ b/conans/server/service/v2/search.py
+@@ -3,7 +3,7 @@
+ import re
+ from fnmatch import translate
+ 
+-from conans.errors import ForbiddenException, RecipeNotFoundException
++from conan.internal.errors import ForbiddenException, RecipeNotFoundException
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ from conan.internal.paths import CONANINFO
+@@ -75,20 +75,18 @@ def _search_recipes(self, pattern=None, ignorecase=True):
+         def underscore_to_none(field):
+             return field if field != "_" else None
+ 
++        ret = set()
+         if not pattern:
+-            ret = []
+             for folder in subdirs:
+                 fields_dir = [underscore_to_none(d) for d in folder.split("/")]
+                 r = RecipeReference(*fields_dir)
+                 r.revision = None
+-                ret.append(r)
+-            return sorted(ret)
++                ret.add(r)
+         else:
+             # Conan references in main storage
+             pattern = str(pattern)
+             b_pattern = translate(pattern)
+             b_pattern = re.compile(b_pattern, re.IGNORECASE) if ignorecase else re.compile(b_pattern)
+-            ret = set()
+             for subdir in subdirs:
+                 fields_dir = [underscore_to_none(d) for d in subdir.split("/")]
+                 new_ref = RecipeReference(*fields_dir)
+@@ -96,7 +94,7 @@ def underscore_to_none(field):
+                 if new_ref.partial_match(b_pattern):
+                     ret.add(new_ref)
+ 
+-            return sorted(ret)
++        return sorted(ret)
+ 
+     def search(self, pattern=None, ignorecase=True):
+         """ Get all the info about any package
+diff --git a/conans/server/service/v2/service_v2.py b/conans/server/service/v2/service_v2.py
+index be37b5d68ec..a7c0f158b55 100644
+--- a/conans/server/service/v2/service_v2.py
++++ b/conans/server/service/v2/service_v2.py
+@@ -3,7 +3,7 @@
+ 
+ from bottle import FileUpload, static_file
+ 
+-from conans.errors import RecipeNotFoundException, PackageNotFoundException, NotFoundException
++from conan.internal.errors import NotFoundException, RecipeNotFoundException, PackageNotFoundException
+ from conan.internal.paths import CONAN_MANIFEST
+ from conans.model.package_ref import PkgReference
+ from conans.server.service.mime import get_mime_type
+diff --git a/conans/server/store/disk_adapter.py b/conans/server/store/disk_adapter.py
+index 941d1fe8be2..30b3a308ec9 100644
+--- a/conans/server/store/disk_adapter.py
++++ b/conans/server/store/disk_adapter.py
+@@ -3,7 +3,7 @@
+ 
+ import fasteners
+ 
+-from conans.errors import NotFoundException
++from conan.internal.errors import NotFoundException
+ from conans.util.files import md5sum, rmdir
+ from conans.server.utils.files import path_exists, relative_dirs
+ 
+diff --git a/conans/server/store/server_store.py b/conans/server/store/server_store.py
+index e79e956a3ae..8f3fb78432f 100644
+--- a/conans/server/store/server_store.py
++++ b/conans/server/store/server_store.py
+@@ -1,7 +1,8 @@
+ import os
+ from os.path import join, normpath, relpath
+ 
+-from conans.errors import ConanException, PackageNotFoundException, RecipeNotFoundException
++from conan.internal.errors import RecipeNotFoundException, PackageNotFoundException
++from conan.errors import ConanException
+ from conan.internal.paths import CONAN_MANIFEST
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+diff --git a/conans/util/config_parser.py b/conans/util/config_parser.py
+index 9c526379d63..3b2b98c1d58 100644
+--- a/conans/util/config_parser.py
++++ b/conans/util/config_parser.py
+@@ -1,6 +1,6 @@
+ import re
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ class ConfigParser(object):
+diff --git a/conans/util/dates.py b/conans/util/dates.py
+index 1881326af77..9e01c667bcf 100644
+--- a/conans/util/dates.py
++++ b/conans/util/dates.py
+@@ -4,7 +4,7 @@
+ 
+ from dateutil import parser
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ def from_timestamp_to_iso8601(timestamp):
+diff --git a/conans/util/files.py b/conans/util/files.py
+index a47d95301fd..fd03715ee08 100644
+--- a/conans/util/files.py
++++ b/conans/util/files.py
+@@ -11,8 +11,7 @@
+ 
+ from contextlib import contextmanager
+ 
+-
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ _DIRTY_FOLDER = ".dirty"
+ 
+diff --git a/conans/util/runners.py b/conans/util/runners.py
+index 434bee38ed5..219d0f9eece 100644
+--- a/conans/util/runners.py
++++ b/conans/util/runners.py
+@@ -5,7 +5,7 @@
+ from contextlib import contextmanager
+ from io import StringIO
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.util.files import load
+ 
+ 
+diff --git a/test/functional/revisions_test.py b/test/functional/revisions_test.py
+index bf052ca71b7..35387d956eb 100644
+--- a/test/functional/revisions_test.py
++++ b/test/functional/revisions_test.py
+@@ -7,7 +7,7 @@
+ from mock import patch
+ 
+ from conan.test.utils.env import environment_update
+-from conans.errors import RecipeNotFoundException
++from conan.internal.errors import RecipeNotFoundException
+ from conans.model.recipe_ref import RecipeReference
+ from conans.server.revision_list import RevisionList
+ from conan.test.utils.tools import TestServer, TurboTestClient, GenConanfile, TestClient
+diff --git a/test/functional/util/tools_test.py b/test/functional/util/tools_test.py
+index b89fc1c583c..c73fa55117f 100644
+--- a/test/functional/util/tools_test.py
++++ b/test/functional/util/tools_test.py
+@@ -6,7 +6,7 @@
+ import pytest
+ 
+ from conan.internal.api.detect.detect_vs import vswhere
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conan.test.utils.env import environment_update
+ 
+ 
+diff --git a/test/integration/cache/backup_sources_test.py b/test/integration/cache/backup_sources_test.py
+index 5c72e660976..63c539acfef 100644
+--- a/test/integration/cache/backup_sources_test.py
++++ b/test/integration/cache/backup_sources_test.py
+@@ -6,7 +6,8 @@
+ import pytest
+ from bottle import static_file, HTTPError, request
+ 
+-from conans.errors import NotFoundException, ConanException
++from conan.internal.errors import NotFoundException
++from conan.errors import ConanException
+ from conan.test.utils.file_server import TestFileServer
+ from conan.test.utils.test_files import temp_folder
+ from conan.test.utils.tools import TestClient, StoppableThreadBottle
+diff --git a/test/integration/command/remove_test.py b/test/integration/command/remove_test.py
+index f227ea509d4..c8b7bfee474 100644
+--- a/test/integration/command/remove_test.py
++++ b/test/integration/command/remove_test.py
+@@ -5,7 +5,7 @@
+ import pytest
+ 
+ from conan.api.conan_api import ConanAPI
+-from conans.errors import NotFoundException
++from conan.internal.errors import NotFoundException
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ from conan.test.utils.tools import NO_SETTINGS_PACKAGE_ID, TestClient, TestServer, GenConanfile
+diff --git a/test/integration/command/upload/upload_test.py b/test/integration/command/upload/upload_test.py
+index a370084357a..926d0dce71a 100644
+--- a/test/integration/command/upload/upload_test.py
++++ b/test/integration/command/upload/upload_test.py
+@@ -10,7 +10,7 @@
+ from mock import patch
+ from requests import Response
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ from conan.internal.paths import EXPORT_SOURCES_TGZ_NAME, PACKAGE_TGZ_NAME
+diff --git a/test/integration/command_v2/custom_commands_test.py b/test/integration/command_v2/custom_commands_test.py
+index bf02fc46ecc..c28b9d50e43 100644
+--- a/test/integration/command_v2/custom_commands_test.py
++++ b/test/integration/command_v2/custom_commands_test.py
+@@ -345,6 +345,32 @@ def mycmd2(conan_api, parser, *args, **kwargs):
+         assert "MYCMD1!!!!!" in c.out
+         assert "MYCMD2!!!!!" in c.out
+ 
++    def test_command_verbosity_leak(self):
++        mycommand = textwrap.dedent(f"""
++                    import json
++                    from conan.cli.command import conan_command
++                    from conan.api.output import ConanOutput
++
++                    @conan_command(group="custom commands")
++                    def mycommand(conan_api, parser, *args, **kwargs):
++                        \""" mycommand help \"""
++                        parser.add_argument("foo", help="foo")
++                        args = parser.parse_args(*args)
++
++                        out = ConanOutput()
++                        out.title("This is my first title")
++                        conan_api.command.run("config home")
++                        out.title("This is my second title")
++                    """)
++
++        c = TestClient()
++        command_file_path = os.path.join(c.cache_folder, 'extensions',
++                                         'commands', 'cmd_mycommand.py')
++        c.save({f"{command_file_path}": mycommand})
++        c.run("mycommand foo -vquiet")
++        assert "This is my first title" not in c.out
++        assert "This is my second title" not in c.out
++
+     def test_command_reuse_interface_create(self):
+         mycommand = textwrap.dedent("""
+             import json
+diff --git a/test/integration/command_v2/list_test.py b/test/integration/command_v2/list_test.py
+index 63b167b9289..a23bdeee6d8 100644
+--- a/test/integration/command_v2/list_test.py
++++ b/test/integration/command_v2/list_test.py
+@@ -8,7 +8,8 @@
+ 
+ import pytest
+ 
+-from conans.errors import ConanException, ConanConnectionError
++from conan.internal.errors import ConanConnectionError
++from conan.errors import ConanException
+ from conan.test.assets.genconanfile import GenConanfile
+ from conan.test.utils.tools import TestClient, TestServer, NO_SETTINGS_PACKAGE_ID
+ from conan.test.utils.env import environment_update
+@@ -920,3 +921,13 @@ def test_list_filter(self, remote):
+         assert len(pkg["packages"]) == 2
+         settings = pkg["packages"]["d2e97769569ac0a583d72c10a37d5ca26de7c9fa"]["info"]["settings"]
+         assert settings == {"arch": "x86", "os": "Windows"}
++
++
++def test_overlapping_versions():
++    tc = TestClient(light=True)
++    tc.save({"conanfile.py": GenConanfile("foo")})
++    tc.run("export . --version=1.0")
++    tc.run("export . --version=1.0.0")
++    tc.run("list * -c -f=json", redirect_stdout="list.json")
++    results = json.loads(tc.load("list.json"))
++    assert len(results["Local Cache"]) == 2
+diff --git a/test/integration/command_v2/search_test.py b/test/integration/command_v2/search_test.py
+index 352c86771bd..6d6ae26b300 100644
+--- a/test/integration/command_v2/search_test.py
++++ b/test/integration/command_v2/search_test.py
+@@ -4,7 +4,8 @@
+ 
+ import pytest
+ 
+-from conans.errors import ConanConnectionError, ConanException
++from conan.internal.errors import ConanConnectionError
++from conan.errors import ConanException
+ from conans.model.recipe_ref import RecipeReference
+ from conan.test.assets.genconanfile import GenConanfile
+ from conan.test.utils.tools import TestClient, TestServer
+diff --git a/test/integration/command_v2/test_info_build_order.py b/test/integration/command_v2/test_info_build_order.py
+index 21f6b86a4d9..bb9c688c7a0 100644
+--- a/test/integration/command_v2/test_info_build_order.py
++++ b/test/integration/command_v2/test_info_build_order.py
+@@ -237,13 +237,13 @@ def test_info_build_order_options():
+                   'context': 'build', 'depends': [], "overrides": {},
+                   'binary': 'Build', 'options': ['tool/0.1:myopt=2'], 'filenames': [],
+                   'info': {'options': {'myopt': '2'}},
+-                  'build_args': '--tool-requires=tool/0.1 --build=tool/0.1 -o tool/0.1:myopt=2'},
++                  'build_args': '--tool-requires=tool/0.1 --build=tool/0.1 -o:b="tool/0.1:myopt=2"'},
+                  {'package_id': 'a9035d84c5880b26c4b44acf70078c9a7dd37412', 'prev': None,
+                   'context': 'build', 'depends': [], "overrides": {},
+                   'info': {'options': {'myopt': '1'}},
+                   'binary': 'Build', 'options': ['tool/0.1:myopt=1'],
+                   'filenames': [],
+-                  'build_args': '--tool-requires=tool/0.1 --build=tool/0.1 -o tool/0.1:myopt=1'}
++                  'build_args': '--tool-requires=tool/0.1 --build=tool/0.1 -o:b="tool/0.1:myopt=1"'}
+              ]]}
+         ],
+         [
+@@ -765,3 +765,22 @@ def validate(self):
+         tc.run("graph build-order-merge --file=order.json --file=order.json --format=json", assert_error=True)
+         assert "dep/1.0:da39a3ee5e6b4b0d3255bfef95601890afd80709: Invalid configuration" in tc.out
+         assert "IndexError: list index out of range" not in tc.out
++
++def test_build_order_space_in_options():
++    tc = TestClient(light=True)
++    tc.save({"dep/conanfile.py": GenConanfile("dep", "1.0")
++                .with_option("flags", ["ANY", None])
++                .with_option("extras", ["ANY", None]),
++             "conanfile.txt": textwrap.dedent("""
++             [requires]
++             dep/1.0
++
++             [options]
++             dep/*:flags=define=FOO define=BAR define=BAZ
++             dep/*:extras=cxx="yes" gnuext='no'
++             """)})
++
++    tc.run("create dep")
++    tc.run("graph build-order . --order-by=configuration --build=dep/1.0 -f=json", redirect_stdout="order.json")
++    order = json.loads(tc.load("order.json"))
++    assert order["order"][0][0]["build_args"] == '''--requires=dep/1.0 --build=dep/1.0 -o="dep/*:extras=cxx="yes" gnuext='no'" -o="dep/*:flags=define=FOO define=BAR define=BAZ"'''
+diff --git a/test/integration/conan_api/search_test.py b/test/integration/conan_api/search_test.py
+index 7eab145bc56..2d8c8c83dfc 100644
+--- a/test/integration/conan_api/search_test.py
++++ b/test/integration/conan_api/search_test.py
+@@ -1,38 +1,47 @@
++import pytest
++
+ from conan.api.conan_api import ConanAPI
++from conan.api.model import Remote
+ from conans.model.recipe_ref import RecipeReference
+ from conan.test.assets.genconanfile import GenConanfile
+-from conan.test.utils.tools import TurboTestClient
++from conan.test.utils.tools import TestClient
+ 
+ 
+-def test_search_recipes():
++@pytest.mark.parametrize("remote_name", [None, "default"])
++def test_search_recipes(remote_name):
+     """
+         Test the "api.search.recipes"
+     """
+-    client = TurboTestClient(default_server_user=True)
+-    ref = RecipeReference.loads("foo/1.0")
+-    pref1 = client.create(ref, GenConanfile())
+-    conanfile_2 = GenConanfile().with_build_msg("change2")
+-    pref2 = client.create(ref, conanfile_2)
+-    pref3 = client.create(RecipeReference.loads("felipe/1.0"), conanfile_2)
++    client = TestClient(default_server_user=True)
++    client.save({"conanfile.py": GenConanfile()})
++    client.run("create . --name=foo --version=1.0")
++    client.run("create . --name=felipe --version=2.0")
++    client.save({"conanfile.py": GenConanfile().with_build_msg("change")})
++    # Different version&revision, but 1.0 < 2.0, which has an earlier timestamp
++    client.run("create . --name=felipe --version=1.0")
++    # Different revision, newer timestamp
++    client.run("create . --name=foo --version=1.0")
+ 
+-    client.upload_all(pref1.ref, "default")
+-    client.upload_all(pref2.ref, "default")
+-    client.upload_all(pref3.ref, "default")
++    client.run("upload * -r=default -c")
+ 
+     # Search all the recipes locally and in the remote
+     api = ConanAPI(client.cache_folder)
+-    for remote in [None, api.remotes.get("default")]:
+-        with client.mocked_servers():
+-            sot = api.search.recipes(query="f*", remote=remote)
+-            assert set(sot) == {RecipeReference.loads("foo/1.0"),
+-                                RecipeReference.loads("felipe/1.0")}
++    remote = api.remotes.get(remote_name) if remote_name else None
++
++    with client.mocked_servers():
++        sot = api.search.recipes(query="f*", remote=remote)
++        assert sot == [RecipeReference.loads("felipe/1.0"),
++                       RecipeReference.loads("felipe/2.0"),
++                       RecipeReference.loads("foo/1.0")]
+ 
+-            sot = api.search.recipes(query="fo*", remote=remote)
+-            assert set(sot) == {RecipeReference.loads("foo/1.0")}
++        sot = api.search.recipes(query="fo*", remote=remote)
++        assert sot == [RecipeReference.loads("foo/1.0")]
+ 
+-            sot = api.search.recipes(query=None, remote=remote)
+-            assert set(sot) == {RecipeReference.loads("foo/1.0"),
+-                                RecipeReference.loads("felipe/1.0")}
++        sot = api.search.recipes(query=None, remote=remote)
++        assert sot == [RecipeReference.loads("felipe/1.0"),
++                       RecipeReference.loads("felipe/2.0"),
++                       RecipeReference.loads("foo/1.0")]
+ 
+-            sot = api.search.recipes(query="*i*", remote=remote)
+-            assert set(sot) == {RecipeReference.loads("felipe/1.0")}
++        sot = api.search.recipes(query="*i*", remote=remote)
++        assert sot == [RecipeReference.loads("felipe/1.0"),
++                       RecipeReference.loads("felipe/2.0")]
+diff --git a/test/integration/configuration/required_version_test.py b/test/integration/configuration/required_version_test.py
+index eb69db7cba1..58714e856e2 100644
+--- a/test/integration/configuration/required_version_test.py
++++ b/test/integration/configuration/required_version_test.py
+@@ -3,7 +3,7 @@
+ import mock
+ 
+ from conans import __version__
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conan.test.utils.test_files import temp_folder
+ from conan.test.utils.tools import TestClient
+ from conans.util.files import save
+diff --git a/test/integration/cps/test_cps.py b/test/integration/cps/test_cps.py
+index f1ce24f6c19..e8252739864 100644
+--- a/test/integration/cps/test_cps.py
++++ b/test/integration/cps/test_cps.py
+@@ -2,8 +2,11 @@
+ import os
+ import textwrap
+ 
++from conan.cps import CPS
+ from conan.test.assets.genconanfile import GenConanfile
++from conan.test.utils.test_files import temp_folder
+ from conan.test.utils.tools import TestClient
++from conans.util.files import save_files
+ 
+ 
+ def test_cps():
+@@ -117,3 +120,63 @@ def package_info(self):
+     assert 'set(zlib_INCLUDE_DIRS_RELEASE "${zlib_PACKAGE_FOLDER_RELEASE}/include")' in cmake
+     assert 'set(zlib_LIB_DIRS_RELEASE "${zlib_PACKAGE_FOLDER_RELEASE}/lib")'
+     assert 'set(zlib_LIBS_RELEASE zlib)' in cmake
++
++
++def test_cps_merge():
++    folder = temp_folder()
++    cps_base = textwrap.dedent("""
++        {
++          "components" : {
++            "mypkg" : {
++              "includes" : [ "@prefix@/include" ],
++              "type" : "archive"
++            }
++          },
++          "cps_version" : "0.12.0",
++          "name" : "mypkg",
++          "version" : "1.0"
++        }
++        """)
++    cps_conf = textwrap.dedent("""
++        {
++          "components" : {
++            "mypkg" : {
++              "link_languages" : [ "cpp" ],
++              "location" : "@prefix@/lib/mypkg.lib"
++            }
++          },
++          "configuration" : "Release",
++          "name" : "mypkg"
++        }
++        """)
++    save_files(folder, {"mypkg.cps": cps_base,
++                        "mypkg@release.cps": cps_conf})
++    cps = CPS.load(os.path.join(folder, "mypkg.cps"))
++    json_cps = cps.serialize()
++    print(json.dumps(json_cps, indent=2))
++
++
++def test_extended_cpp_info():
++    c = TestClient()
++    conanfile = textwrap.dedent("""
++        from conan import ConanFile
++        class Pkg(ConanFile):
++            name = "pkg"
++            version = "0.1"
++            def package_info(self):
++                self.cpp_info.libs = ["mylib"]
++                self.cpp_info.location = "my_custom_location"
++                self.cpp_info.type = "static-library"
++            """)
++    c.save({"conanfile.py": conanfile})
++    c.run("create .")
++
++    settings = "-s os=Windows -s compiler=msvc -s compiler.version=191 -s arch=x86_64"
++    c.run(f"install --requires=pkg/0.1 {settings} -g CPSDeps")
++    pkg = json.loads(c.load("build/cps/msvc-191-x86_64-release/pkg.cps"))
++    assert pkg["name"] == "pkg"
++    assert pkg["version"] == "0.1"
++    assert pkg["default_components"] == ["pkg"]
++    pkg_comp = pkg["components"]["pkg"]
++    assert pkg_comp["type"] == "archive"
++    assert pkg_comp["location"] == "my_custom_location"
+diff --git a/test/integration/cps/test_extended_cpp_info.py b/test/integration/cps/test_extended_cpp_info.py
+deleted file mode 100644
+index 4308fd5b6e1..00000000000
+--- a/test/integration/cps/test_extended_cpp_info.py
++++ /dev/null
+@@ -1,29 +0,0 @@
+-import json
+-import textwrap
+-
+-from conan.test.utils.tools import TestClient
+-
+-
+-def test_extended_cpp_info():
+-    c = TestClient()
+-    conanfile = textwrap.dedent("""
+-        from conan import ConanFile
+-        class Pkg(ConanFile):
+-            name = "pkg"
+-            version = "0.1"
+-            def package_info(self):
+-                self.cpp_info.libs = {"mylib": {"location": "my_custom_location",
+-                                                "type": "static-library"}}
+-            """)
+-    c.save({"conanfile.py": conanfile})
+-    c.run("create .")
+-
+-    settings = "-s os=Windows -s compiler=msvc -s compiler.version=191 -s arch=x86_64"
+-    c.run(f"install --requires=pkg/0.1 {settings} -g CPSDeps")
+-    pkg = json.loads(c.load("build/cps/msvc-191-x86_64-release/pkg.cps"))
+-    assert pkg["name"] == "pkg"
+-    assert pkg["version"] == "0.1"
+-    assert pkg["default_components"] == ["pkg"]
+-    pkg_comp = pkg["components"]["pkg"]
+-    assert pkg_comp["type"] == "archive"
+-    assert pkg_comp["location"] == "my_custom_location"
+diff --git a/test/integration/graph/core/graph_manager_test.py b/test/integration/graph/core/graph_manager_test.py
+index bf620c4ca12..4c3dda4d405 100644
+--- a/test/integration/graph/core/graph_manager_test.py
++++ b/test/integration/graph/core/graph_manager_test.py
+@@ -2,7 +2,7 @@
+ from parameterized import parameterized
+ 
+ from conans.client.graph.graph_error import GraphMissingError, GraphLoopError, GraphConflictError
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from test.integration.graph.core.graph_manager_base import GraphManagerTest
+ from conan.test.utils.tools import GenConanfile
+ 
+diff --git a/test/integration/graph/test_validate_build.py b/test/integration/graph/test_validate_build.py
+index c05a68db26b..ff5afb38f73 100644
+--- a/test/integration/graph/test_validate_build.py
++++ b/test/integration/graph/test_validate_build.py
+@@ -10,7 +10,7 @@ def test_basic_validate_build_test():
+     t = TestClient()
+     conanfile = textwrap.dedent("""
+     from conan import ConanFile
+-    from conans.errors import ConanInvalidConfiguration
++    from conan.errors import ConanInvalidConfiguration
+ 
+     class myConan(ConanFile):
+         name = "foo"
+@@ -57,7 +57,7 @@ def test_with_options_validate_build_test():
+     t = TestClient(light=True)
+     conanfile = textwrap.dedent("""
+     from conan import ConanFile
+-    from conans.errors import ConanInvalidConfiguration
++    from conan.errors import ConanInvalidConfiguration
+ 
+     class myConan(ConanFile):
+         name = "foo"
+diff --git a/test/integration/remote/auth_test.py b/test/integration/remote/auth_test.py
+index be9f6d5f87a..da585c94e1f 100644
+--- a/test/integration/remote/auth_test.py
++++ b/test/integration/remote/auth_test.py
+@@ -6,7 +6,7 @@
+ from requests.models import Response
+ 
+ from conan.internal.api.remotes.localdb import LocalDB
+-from conans.errors import AuthenticationException
++from conan.internal.errors import AuthenticationException
+ from conans.model.recipe_ref import RecipeReference
+ from conan.internal.paths import CONANFILE
+ from conan.test.assets.genconanfile import GenConanfile
+@@ -202,9 +202,9 @@ def test_token_expired():
+        */*@*/*: admin
+        """)
+     save(os.path.join(server_folder, ".conan_server", "server.conf"), server_conf)
+-    server = TestServer(base_path=server_folder, users={"admin": "password"})
++    server = TestServer(base_path=server_folder, users={"admin": "password", "other": "pass"})
+ 
+-    c = TestClient(servers={"default": server}, inputs=["admin", "password"])
++    c = TestClient(servers={"default": server}, inputs=["admin", "password", "other", "pass"])
+     c.save({"conanfile.py": GenConanfile()})
+     c.run("create . --name=pkg --version=0.1 --user=user --channel=stable")
+     c.run("upload * -r=default -c")
+@@ -216,13 +216,12 @@ def test_token_expired():
+     import time
+     time.sleep(3)
+     c.users = {}
+-    conan_conf = "core:non_interactive=True"
+-    c.save_home({"global.conf": conan_conf})
+     c.run("remove * -c")
+     c.run("install --requires=pkg/0.1@user/stable")
++    assert "Remote 'default' needs authentication, obtaining credentials" in c.out
+     user, token, _ = localdb.get_login(server.fake_url)
+-    assert user == "admin"
+-    assert token is None
++    assert user == "other"
++    assert token is not None
+ 
+ 
+ def test_auth_username_space():
+diff --git a/test/integration/remote/rest_api_test.py b/test/integration/remote/rest_api_test.py
+index cbb87dcd161..014af5b00b2 100644
+--- a/test/integration/remote/rest_api_test.py
++++ b/test/integration/remote/rest_api_test.py
+@@ -32,7 +32,11 @@ class RestApiTest(unittest.TestCase):
+     def setUpClass(cls):
+         if not cls.server:
+             with environment_update({"CONAN_SERVER_PORT": str(get_free_port())}):
+-                cls.server = TestServerLauncher(server_capabilities=['ImCool', 'TooCool'])
++                read_perms = [("*/*@*/*", "private_user")]
++                write_perms = [("*/*@*/*", "private_user")]
++                cls.server = TestServerLauncher(server_capabilities=['ImCool', 'TooCool'],
++                                                read_permissions=read_perms,
++                                                write_permissions=write_perms)
+                 cls.server.start()
+ 
+                 filename = os.path.join(temp_folder(), "conan.conf")
+diff --git a/test/integration/remote/retry_test.py b/test/integration/remote/retry_test.py
+index e5cba085f25..5653f65621e 100644
+--- a/test/integration/remote/retry_test.py
++++ b/test/integration/remote/retry_test.py
+@@ -5,7 +5,7 @@
+ from requests.exceptions import HTTPError
+ 
+ from conans.client.rest.file_uploader import FileUploader
+-from conans.errors import AuthenticationException, ForbiddenException
++from conan.internal.errors import AuthenticationException, ForbiddenException
+ from conan.test.utils.mocks import RedirectedTestOutput
+ from conan.test.utils.test_files import temp_folder
+ from conan.test.utils.tools import redirect_output
+@@ -73,7 +73,7 @@ def test_error_403_forbidden(self):
+             uploader = FileUploader(requester=_RequesterMock(403, "content"),
+                                     verify=False, config=_ConfigMock())
+             with self.assertRaisesRegex(ForbiddenException, "content"):
+-                auth = namedtuple("auth", "token")
++                auth = namedtuple("auth", "bearer")
+                 uploader.upload(url="fake", abs_path=self.filename, retry=2, auth=auth("token"))
+             output_lines = output.getvalue().splitlines()
+             counter = Counter(output_lines)
+@@ -86,7 +86,7 @@ def test_error_403_authentication(self):
+             uploader = FileUploader(requester=_RequesterMock(403, "content"),
+                                     verify=False, config=_ConfigMock())
+             with self.assertRaisesRegex(AuthenticationException, "content"):
+-                auth = namedtuple("auth", "token")
++                auth = namedtuple("auth", "bearer")
+                 uploader.upload(url="fake", abs_path=self.filename, retry=2, auth=auth(None))
+             output_lines = output.getvalue().splitlines()
+             counter = Counter(output_lines)
+diff --git a/test/integration/tools/system/package_manager_test.py b/test/integration/tools/system/package_manager_test.py
+index b769b4e0bc4..5eb052baca9 100644
+--- a/test/integration/tools/system/package_manager_test.py
++++ b/test/integration/tools/system/package_manager_test.py
+@@ -7,7 +7,7 @@
+ 
+ from conan.tools.system.package_manager import Apt, Apk, Dnf, Yum, Brew, Pkg, PkgUtil, Chocolatey, \
+     Zypper, PacMan, _SystemPackageManagerTool
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.settings import Settings
+ from conan.test.utils.mocks import ConanFileMock, MockSettings
+ 
+diff --git a/test/unittests/cli/common_test.py b/test/unittests/cli/common_test.py
+index 47c4282521f..b62c6e4838b 100644
+--- a/test/unittests/cli/common_test.py
++++ b/test/unittests/cli/common_test.py
+@@ -5,7 +5,7 @@
+ 
+ from conan.api.conan_api import ConanAPI
+ from conan.internal.cache.home_paths import HomePaths
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conan.test.utils.test_files import temp_folder
+ from conans.util.files import save
+ 
+diff --git a/test/unittests/client/conanfile_loader_test.py b/test/unittests/client/conanfile_loader_test.py
+index 69ebb92c1ce..9bfd97d8dc0 100644
+--- a/test/unittests/client/conanfile_loader_test.py
++++ b/test/unittests/client/conanfile_loader_test.py
+@@ -7,7 +7,7 @@
+ from parameterized import parameterized
+ 
+ from conans.client.loader import ConanFileLoader, ConanFileTextLoader, load_python_file
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conan.test.utils.test_files import temp_folder
+ from conans.util.files import save, chdir
+ 
+diff --git a/test/unittests/client/graph/build_mode_test.py b/test/unittests/client/graph/build_mode_test.py
+index b760f707802..653dd053a51 100644
+--- a/test/unittests/client/graph/build_mode_test.py
++++ b/test/unittests/client/graph/build_mode_test.py
+@@ -1,7 +1,7 @@
+ import pytest
+ 
+ from conans.client.graph.build_mode import BuildMode
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import RecipeReference
+ from conan.test.utils.mocks import ConanFileMock, RedirectedTestOutput
+ from conan.test.utils.tools import redirect_output
+diff --git a/test/unittests/client/migrations/test_migrator.py b/test/unittests/client/migrations/test_migrator.py
+index 66a38636efd..f8224cff5a5 100644
+--- a/test/unittests/client/migrations/test_migrator.py
++++ b/test/unittests/client/migrations/test_migrator.py
+@@ -3,7 +3,7 @@
+ 
+ import pytest
+ 
+-from conans.errors import ConanMigrationError
++from conan.errors import ConanMigrationError
+ from conans.migrations import Migrator
+ from conan.test.utils.test_files import temp_folder
+ 
+diff --git a/test/unittests/client/profile_loader/compiler_cppstd_test.py b/test/unittests/client/profile_loader/compiler_cppstd_test.py
+index af73239e1f5..f2468f7a054 100644
+--- a/test/unittests/client/profile_loader/compiler_cppstd_test.py
++++ b/test/unittests/client/profile_loader/compiler_cppstd_test.py
+@@ -9,7 +9,7 @@
+ from conan.internal.cache.home_paths import HomePaths
+ from conan.internal.api.profile.profile_loader import ProfileLoader
+ from conan.internal.default_settings import default_settings_yml
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.conf import ConfDefinition
+ from conans.model.settings import Settings
+ from conan.test.utils.test_files import temp_folder
+diff --git a/test/unittests/client/profile_loader/profile_loader_test.py b/test/unittests/client/profile_loader/profile_loader_test.py
+index b62722b8095..9e20d9c5e9b 100644
+--- a/test/unittests/client/profile_loader/profile_loader_test.py
++++ b/test/unittests/client/profile_loader/profile_loader_test.py
+@@ -4,7 +4,7 @@
+ import pytest
+ 
+ from conan.internal.api.profile.profile_loader import _ProfileParser, ProfileLoader
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import RecipeReference
+ from conan.test.utils.mocks import ConanFileMock, MockSettings
+ from conan.test.utils.test_files import temp_folder
+diff --git a/test/unittests/client/rest/downloader_test.py b/test/unittests/client/rest/downloader_test.py
+index a5b8464c15a..b6341535812 100644
+--- a/test/unittests/client/rest/downloader_test.py
++++ b/test/unittests/client/rest/downloader_test.py
+@@ -6,7 +6,7 @@
+ import pytest
+ 
+ from conans.client.downloaders.file_downloader import FileDownloader
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ class MockResponse(object):
+diff --git a/test/unittests/client/rest/uploader_test.py b/test/unittests/client/rest/uploader_test.py
+index 53daf468c5c..e8a6fbb71af 100644
+--- a/test/unittests/client/rest/uploader_test.py
++++ b/test/unittests/client/rest/uploader_test.py
+@@ -3,7 +3,7 @@
+ from collections import namedtuple
+ 
+ from conans.client.rest.file_uploader import FileUploader
+-from conans.errors import AuthenticationException, ForbiddenException, InternalErrorException
++from conan.internal.errors import InternalErrorException, AuthenticationException, ForbiddenException
+ from conans.util.files import save
+ 
+ 
+@@ -37,7 +37,7 @@ def test_401_raises_unauthoirzed_exception(self):
+             uploader.upload("fake_url", self.f)
+ 
+     def test_403_raises_unauthoirzed_exception_if_no_token(self):
+-        auth = namedtuple("auth", "token")(None)
++        auth = namedtuple("auth", "bearer")(None)
+         uploader = FileUploader(MockRequester(403), verify=False, config=_ConfigMock())
+         with self.assertRaisesRegex(AuthenticationException, "tururu"):
+             uploader.upload("fake_url", self.f, auth=auth)
+@@ -48,7 +48,7 @@ def test_403_raises_unauthorized_exception_if_no_auth(self):
+             uploader.upload("fake_url", self.f)
+ 
+     def test_403_raises_forbidden_exception_if_token(self):
+-        auth = namedtuple("auth", "token")("SOMETOKEN")
++        auth = namedtuple("auth", "bearer")("SOMETOKEN")
+         uploader = FileUploader(MockRequester(403), verify=False, config=_ConfigMock())
+         with self.assertRaisesRegex(ForbiddenException, "tururu"):
+             uploader.upload("fake_url", self.f, auth=auth)
+diff --git a/test/unittests/client/toolchain/autotools/autotools_toolchain_test.py b/test/unittests/client/toolchain/autotools/autotools_toolchain_test.py
+index e5afa10d744..3ad84012039 100644
+--- a/test/unittests/client/toolchain/autotools/autotools_toolchain_test.py
++++ b/test/unittests/client/toolchain/autotools/autotools_toolchain_test.py
+@@ -5,7 +5,7 @@
+ 
+ from conan.tools.build import load_toolchain_args
+ from conan.tools.gnu import AutotoolsToolchain
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.conf import Conf
+ from conan.test.utils.mocks import ConanFileMock, MockSettings, MockOptions
+ from conan.test.utils.test_files import temp_folder
+diff --git a/test/unittests/client/tools/cppstd_required_test.py b/test/unittests/client/tools/cppstd_required_test.py
+index 683fc4bbcba..8da43ebb8ce 100644
+--- a/test/unittests/client/tools/cppstd_required_test.py
++++ b/test/unittests/client/tools/cppstd_required_test.py
+@@ -4,7 +4,7 @@
+ 
+ from conan.tools.build import check_max_cppstd, check_min_cppstd, valid_max_cppstd, valid_min_cppstd
+ from conan.test.utils.mocks import MockSettings, ConanFileMock
+-from conans.errors import ConanInvalidConfiguration, ConanException
++from conan.errors import ConanException, ConanInvalidConfiguration
+ 
+ 
+ def _create_conanfile(compiler, version, os, cppstd, libcxx=None):
+diff --git a/test/unittests/model/options_test.py b/test/unittests/model/options_test.py
+index 447e80ca34b..24ddc72dac2 100644
+--- a/test/unittests/model/options_test.py
++++ b/test/unittests/model/options_test.py
+@@ -2,7 +2,7 @@
+ 
+ import pytest
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.options import Options
+ from conans.model.recipe_ref import RecipeReference
+ 
+diff --git a/test/unittests/model/settings_test.py b/test/unittests/model/settings_test.py
+index d03c9cc3cdc..0c63f49f187 100644
+--- a/test/unittests/model/settings_test.py
++++ b/test/unittests/model/settings_test.py
+@@ -4,7 +4,7 @@
+ import pytest
+ 
+ from conan.internal.default_settings import default_settings_yml
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.settings import Settings, bad_value_msg, undefined_field
+ 
+ 
+diff --git a/test/unittests/model/test_conf.py b/test/unittests/model/test_conf.py
+index e73870a457a..f0d155a74f9 100644
+--- a/test/unittests/model/test_conf.py
++++ b/test/unittests/model/test_conf.py
+@@ -2,7 +2,7 @@
+ 
+ import pytest
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.conf import ConfDefinition
+ 
+ 
+diff --git a/test/unittests/model/test_recipe_reference.py b/test/unittests/model/test_recipe_reference.py
+index d0cc0ca4b44..382424c1c35 100644
+--- a/test/unittests/model/test_recipe_reference.py
++++ b/test/unittests/model/test_recipe_reference.py
+@@ -1,6 +1,6 @@
+ import pytest
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.recipe_ref import RecipeReference
+ 
+ 
+diff --git a/test/unittests/model/version/test_version_range.py b/test/unittests/model/version/test_version_range.py
+index 5b010124593..5ac8d0850ba 100644
+--- a/test/unittests/model/version/test_version_range.py
++++ b/test/unittests/model/version/test_version_range.py
+@@ -2,7 +2,7 @@
+ 
+ import pytest
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.version import Version
+ from conans.model.version_range import VersionRange
+ from conan.test.utils.tools import TestClient
+@@ -33,6 +33,7 @@
+     # pre-releases
+     ['',                             [[[">=", "0.0.0-"]]],    ["1.0"],                ["1.0-pre.1"]],
+     ['*, include_prerelease=True',   [[[">=", "0.0.0-"]]],    ["1.0", "1.0-pre.1", "0.0.0", "0.0.0-pre.1"],   []],
++    [', include_prerelease=True',   [[[">=", "0.0.0-"]]],    ["1.0", "1.0-pre.1", "0.0.0", "0.0.0-pre.1"],   []],
+     ['>1- <2.0',                     [[['>', '1-'], ['<', '2.0-']]],
+                                      ["1.0", "1.1", "1.9"],   ["1-pre.1", "1.5.1-pre1", "2.1-pre1"]],
+     ['>1- <2.0 || ^3.2 ',  [[['>', '1-'], ['<', '2.0-']], [['>=', '3.2-'], ['<', '4.0-']]],
+@@ -53,14 +54,19 @@
+     ['>=2.0-pre.0, include_prerelease', [[['>=', '2.0-pre.0']]], ["2.1", "2.0-pre.1"], ["1.5"]],
+     # Build metadata
+     ['>=1.0.0+2', [[['>=', '1.0.0+2']]], ["1.0.0+2", "1.0.0+3"], ["1.0.0+1"]],
+-    ['>=2.2.0+build.en.305 <2.2.0+build.en.306', [], ["2.2.0+build.en.305", "2.2.0+build.en.305.1", "2.2.0+build.en.305.2"], ["2.2.0+build.en.306"]]
++    ['>=2.2.0+build.en.305 <2.2.0+build.en.306', [[['>=', '2.2.0+build.en.305'], ['<', '2.2.0+build.en.306']]],
++                                                 ["2.2.0+build.en.305", "2.2.0+build.en.305.1", "2.2.0+build.en.305.2"], ["2.2.0+build.en.306"]]
+ ]
+ 
+ 
+ @pytest.mark.parametrize("version_range, conditions, versions_in, versions_out", values)
+ def test_range(version_range, conditions, versions_in, versions_out):
+     r = VersionRange(version_range)
++    assert len(r.condition_sets) == len(conditions), \
++        f"Expected {r} to have {len(conditions)} condition sets, but got {len(r.condition_sets)}"
+     for condition_set, expected_condition_set in zip(r.condition_sets, conditions):
++        assert len(condition_set.conditions) == len(expected_condition_set), \
++            f"Expected {r} to have {len(expected_condition_set)} conditions, but got {len(condition_set.conditions)}"
+         for condition, expected_condition in zip(condition_set.conditions, expected_condition_set):
+             assert condition.operator == expected_condition[0], f"Expected {r} condition operator to be {expected_condition[0]}, but got {condition.operator}"
+             assert condition.version == expected_condition[1], f"Expected {r} condition version to be {expected_condition[1]}, but got {condition.version}"
+@@ -81,6 +87,10 @@ def test_range(version_range, conditions, versions_in, versions_out):
+     ['*, include_prerelease', False, ["1.5.1"], ["1.5.1-pre1", "2.1-pre1"]],
+     ['*, include_prerelease', None, ["1.5.1", "1.5.1-pre1", "2.1-pre1"], []],
+ 
++    [', include_prerelease', True, ["1.5.1", "1.5.1-pre1", "2.1-pre1"], []],
++    [', include_prerelease', False, ["1.5.1"], ["1.5.1-pre1", "2.1-pre1"]],
++    [', include_prerelease', None, ["1.5.1", "1.5.1-pre1", "2.1-pre1"], []],
++
+     ['>1 <2.0', True, ["1.5.1", "1.5.1-pre1"], ["2.1-pre1"]],
+     ['>1 <2.0', False, ["1.5.1"], ["1.5.1-pre1", "2.1-pre1"]],
+     ['>1 <2.0', None, ["1.5.1"], ["1.5.1-pre1", "2.1-pre1"]],
+diff --git a/test/unittests/model/version/test_version_range_intersection.py b/test/unittests/model/version/test_version_range_intersection.py
+index 0d32da7155b..1ad131974a2 100644
+--- a/test/unittests/model/version/test_version_range_intersection.py
++++ b/test/unittests/model/version/test_version_range_intersection.py
+@@ -3,18 +3,25 @@
+ from conans.model.version_range import VersionRange
+ 
+ values = [
++    # empty / any ranges
++    ['', "", ">=0.0.0"],
++    ['*', "*", ">=0.0.0"],
+     # single lower limits bounds
+     ['>1.0', ">1.0", ">1.0"],
+     ['>=1.0', ">1.0", ">1.0"],
+     ['>1.0', ">1.1", ">1.1"],
+     ['>1.0', ">=1.1", ">=1.1"],
+     ['>=1.0', ">=1.1", ">=1.1"],
++    ['', ">1.0", ">1.0"],
++    ['>1.0', "", ">1.0"],
+     # single upper limits bounds
+     ['<2.0', "<2.0", "<2.0"],
+     ['<=1.0', "<1.0", "<1.0"],
+     ['<2.0', "<2.1", "<2.0"],
+     ['<2.0', "<=1.1", "<=1.1"],
+     ['<=1.0', "<=1.1", "<=1.0"],
++    ['', "<2.0", ">=0.0.0 <2.0"],
++    ['<2.0', "", ">=0.0.0 <2.0"],
+     # One lower limit, one upper
+     ['>=1.0', "<2.0", ">=1.0 <2.0"],
+     ['>=1', '<=1', ">=1 <=1"],
+@@ -83,6 +90,9 @@ def test_range_intersection_incompatible(range1, range2):
+ 
+ 
+ prerelease_values = [
++    [", include_prerelease",
++     ">=1.0-pre.1 <1.0-pre.99, include_prerelease",
++     ">=1.0-pre.1 <1.0-pre.99, include_prerelease"],
+     [">=1.0-pre.1 <1.0-pre.99, include_prerelease",
+      ">=1.0-pre.1 <1.0-pre.99, include_prerelease",
+      ">=1.0-pre.1 <1.0-pre.99, include_prerelease"],
+diff --git a/test/unittests/server/conan_server_config_parser_test.py b/test/unittests/server/conan_server_config_parser_test.py
+index c4197e48e74..15172061064 100644
+--- a/test/unittests/server/conan_server_config_parser_test.py
++++ b/test/unittests/server/conan_server_config_parser_test.py
+@@ -2,7 +2,7 @@
+ import os
+ import unittest
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.server.conf import ConanServerConfigParser
+ from conan.test.utils.test_files import temp_folder
+ from conans.util.files import mkdir, save
+diff --git a/test/unittests/server/conf_test.py b/test/unittests/server/conf_test.py
+index 1020ed7e036..c9528fb641a 100644
+--- a/test/unittests/server/conf_test.py
++++ b/test/unittests/server/conf_test.py
+@@ -2,7 +2,7 @@
+ import unittest
+ from datetime import timedelta
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.server.conf import ConanServerConfigParser
+ from conan.test.utils.test_files import temp_folder
+ from conans.util.config_parser import ConfigParser
+diff --git a/test/unittests/server/service/authorizer_test.py b/test/unittests/server/service/authorizer_test.py
+index 27a8ffdaf36..1424dad615b 100644
+--- a/test/unittests/server/service/authorizer_test.py
++++ b/test/unittests/server/service/authorizer_test.py
+@@ -1,6 +1,6 @@
+ import unittest
+ 
+-from conans.errors import AuthenticationException, ForbiddenException, InternalErrorException
++from conan.internal.errors import InternalErrorException, AuthenticationException, ForbiddenException
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ from conans.server.service.authorize import BasicAuthorizer
+@@ -86,7 +86,7 @@ def test_permissions(self):
+         # Only lasote can read it but other conans can be readed
+         read_perms = [(str(self.openssl_ref), "lasote"), ("*/*@*/*", "*")]
+         # Only pepe (and lasote because its owner) can write it and no more users can write
+-        write_perms = [(str(self.openssl_ref), "pepe")]
++        write_perms = [(str(self.openssl_ref), "pepe, lasote")]
+ 
+         authorizer = BasicAuthorizer(read_perms, write_perms)
+ 
+@@ -185,12 +185,11 @@ def test_users(self):
+         # Simple user list
+         read_perms = [("openssl/*@lasote/testing", "user1,user2,user3")]
+         authorizer = BasicAuthorizer(read_perms, [])
+-        for u in ['user1','user2','user3']:
++        for u in ['user1', 'user2', 'user3']:
+             authorizer.check_read_conan(u, self.openssl_ref)
+ 
+         # Spaces bewteen user names should be ignored
+         read_perms = [("openssl/*@lasote/testing", "user1 , user2,\tuser3")]
+         authorizer = BasicAuthorizer(read_perms, [])
+-        for u in ['user1','user2','user3']:
++        for u in ['user1', 'user2', 'user3']:
+             authorizer.check_read_conan(u, self.openssl_ref)
+-
+diff --git a/test/unittests/server/service/service_test.py b/test/unittests/server/service/service_test.py
+index 80c50943f18..8e3e1f7d413 100644
+--- a/test/unittests/server/service/service_test.py
++++ b/test/unittests/server/service/service_test.py
+@@ -2,7 +2,7 @@
+ import os
+ import unittest
+ 
+-from conans.errors import NotFoundException
++from conan.internal.errors import NotFoundException
+ from conans.model.manifest import FileTreeManifest
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+@@ -39,7 +39,7 @@ def setUp(self):
+         self.tmp_dir = temp_folder()
+ 
+         read_perms = [("*/*@*/*", "*")]
+-        write_perms = []
++        write_perms = [("*/*@*/*", "*")]
+         authorizer = BasicAuthorizer(read_perms, write_perms)
+ 
+         self.fake_url = "http://url"
+diff --git a/test/unittests/source/merge_directories_test.py b/test/unittests/source/merge_directories_test.py
+index f840906d870..6edff92909c 100644
+--- a/test/unittests/source/merge_directories_test.py
++++ b/test/unittests/source/merge_directories_test.py
+@@ -5,7 +5,7 @@
+ 
+ import pytest
+ 
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conan.test.utils.test_files import temp_folder
+ from conans.util.files import mkdir, save, merge_directories, load
+ 
+diff --git a/test/unittests/tools/android/test_android_tools.py b/test/unittests/tools/android/test_android_tools.py
+index 508cdd52dd5..b0acc977d5f 100644
+--- a/test/unittests/tools/android/test_android_tools.py
++++ b/test/unittests/tools/android/test_android_tools.py
+@@ -1,5 +1,5 @@
+ from conan.test.utils.mocks import ConanFileMock, MockSettings
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conan.tools.android import android_abi
+ 
+ from pytest import raises
+diff --git a/test/unittests/tools/apple/test_apple_tools.py b/test/unittests/tools/apple/test_apple_tools.py
+index dddaa6ccb61..a54350f8a23 100644
+--- a/test/unittests/tools/apple/test_apple_tools.py
++++ b/test/unittests/tools/apple/test_apple_tools.py
+@@ -3,7 +3,7 @@
+ import textwrap
+ 
+ from conan.internal.internal_tools import is_universal_arch
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conan.test.utils.mocks import ConanFileMock, MockSettings, MockOptions
+ from conan.test.utils.test_files import temp_folder
+ from conan.tools.apple import is_apple_os, to_apple_arch, fix_apple_shared_install_name, XCRun
+diff --git a/test/unittests/tools/build/test_cppstd.py b/test/unittests/tools/build/test_cppstd.py
+index 943a64288c1..1a4f6f80dbb 100644
+--- a/test/unittests/tools/build/test_cppstd.py
++++ b/test/unittests/tools/build/test_cppstd.py
+@@ -2,7 +2,7 @@
+ 
+ from conan.internal.api.detect.detect_api import detect_cppstd
+ from conan.tools.build import supported_cppstd, check_min_cppstd, valid_min_cppstd
+-from conans.errors import ConanException, ConanInvalidConfiguration
++from conan.errors import ConanException, ConanInvalidConfiguration
+ from conans.model.version import Version
+ from conan.test.utils.mocks import MockSettings, ConanFileMock
+ 
+diff --git a/test/unittests/tools/cmake/test_cmaketoolchain.py b/test/unittests/tools/cmake/test_cmaketoolchain.py
+index 09ba6d0fd36..5eb8d43bea7 100644
+--- a/test/unittests/tools/cmake/test_cmaketoolchain.py
++++ b/test/unittests/tools/cmake/test_cmaketoolchain.py
+@@ -7,7 +7,7 @@
+ from conan.internal.default_settings import default_settings_yml
+ from conan.tools.cmake import CMakeToolchain
+ from conan.tools.cmake.toolchain.blocks import Block
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.conf import Conf
+ from conans.model.options import Options
+ from conans.model.settings import Settings
+diff --git a/test/unittests/tools/files/test_downloads.py b/test/unittests/tools/files/test_downloads.py
+index f589900270d..165001b46d2 100644
+--- a/test/unittests/tools/files/test_downloads.py
++++ b/test/unittests/tools/files/test_downloads.py
+@@ -4,7 +4,8 @@
+ import pytest
+ 
+ from conan.tools.files import ftp_download, download, get
+-from conans.errors import ConanException, AuthenticationException
++from conan.internal.errors import AuthenticationException
++from conan.errors import ConanException
+ from conan.test.utils.file_server import TestFileServer
+ from conan.test.utils.mocks import ConanFileMock, RedirectedTestOutput
+ from conan.test.utils.test_files import temp_folder
+diff --git a/test/unittests/tools/files/test_patches.py b/test/unittests/tools/files/test_patches.py
+index 4327f55a757..34708b39da4 100644
+--- a/test/unittests/tools/files/test_patches.py
++++ b/test/unittests/tools/files/test_patches.py
+@@ -4,7 +4,7 @@
+ import pytest
+ 
+ from conan.tools.files import patch, apply_conandata_patches
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conan.test.utils.mocks import ConanFileMock, RedirectedTestOutput
+ from conan.test.utils.tools import redirect_output
+ 
+diff --git a/test/unittests/tools/files/test_toolchain.py b/test/unittests/tools/files/test_toolchain.py
+index 5e2abf6c860..8fcc06c5d51 100644
+--- a/test/unittests/tools/files/test_toolchain.py
++++ b/test/unittests/tools/files/test_toolchain.py
+@@ -5,7 +5,7 @@
+ 
+ from conan.tools.build import load_toolchain_args, save_toolchain_args, CONAN_TOOLCHAIN_ARGS_FILE, \
+     CONAN_TOOLCHAIN_ARGS_SECTION
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conan.test.utils.test_files import temp_folder
+ from conans.util.files import save, load
+ 
+diff --git a/test/unittests/tools/gnu/autotoolschain_test.py b/test/unittests/tools/gnu/autotoolschain_test.py
+index 8c56c2d73b3..37096e97030 100644
+--- a/test/unittests/tools/gnu/autotoolschain_test.py
++++ b/test/unittests/tools/gnu/autotoolschain_test.py
+@@ -4,7 +4,7 @@
+ 
+ from conan.tools.build import cmd_args_to_string
+ from conan.tools.gnu import AutotoolsToolchain
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.conf import Conf
+ from conan.test.utils.mocks import ConanFileMock, MockSettings
+ 
+diff --git a/test/unittests/tools/gnu/test_gnutoolchain.py b/test/unittests/tools/gnu/test_gnutoolchain.py
+index 99668506cc0..cf053530e1f 100644
+--- a/test/unittests/tools/gnu/test_gnutoolchain.py
++++ b/test/unittests/tools/gnu/test_gnutoolchain.py
+@@ -4,7 +4,7 @@
+ 
+ from conan.tools.build import cmd_args_to_string
+ from conan.tools.gnu import GnuToolchain
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.conf import Conf
+ from conan.test.utils.mocks import ConanFileMock, MockSettings
+ 
+diff --git a/test/unittests/tools/gnu/test_triplets.py b/test/unittests/tools/gnu/test_triplets.py
+index be07191404e..62647957661 100644
+--- a/test/unittests/tools/gnu/test_triplets.py
++++ b/test/unittests/tools/gnu/test_triplets.py
+@@ -1,7 +1,7 @@
+ import pytest
+ 
+ from conan.tools.gnu.get_gnu_triplet import _get_gnu_triplet, _get_gnu_os, _get_gnu_arch
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ 
+ 
+ @pytest.mark.parametrize("os_, arch, compiler, expected", [
+diff --git a/test/unittests/tools/intel/test_intel_cc.py b/test/unittests/tools/intel/test_intel_cc.py
+index 8b9a6d4b361..788ff41075d 100644
+--- a/test/unittests/tools/intel/test_intel_cc.py
++++ b/test/unittests/tools/intel/test_intel_cc.py
+@@ -6,7 +6,7 @@
+ 
+ from conan.tools.build.flags import architecture_flag, cppstd_flag
+ from conan.tools.intel import IntelCC
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.conf import ConfDefinition
+ from conan.test.utils.mocks import ConanFileMock, MockSettings
+ 
+diff --git a/test/unittests/tools/microsoft/test_check_min_vs.py b/test/unittests/tools/microsoft/test_check_min_vs.py
+index a480e163df3..3afa2eb7524 100644
+--- a/test/unittests/tools/microsoft/test_check_min_vs.py
++++ b/test/unittests/tools/microsoft/test_check_min_vs.py
+@@ -1,7 +1,7 @@
+ import pytest
+ 
+ from conan.tools.microsoft import check_min_vs
+-from conans.errors import ConanInvalidConfiguration
++from conan.errors import ConanInvalidConfiguration
+ from conan.test.utils.mocks import ConanFileMock, MockSettings
+ 
+ 
+diff --git a/test/unittests/util/file_hashes_test.py b/test/unittests/util/file_hashes_test.py
+index b7ae5f0388a..7115e8e1f0f 100644
+--- a/test/unittests/util/file_hashes_test.py
++++ b/test/unittests/util/file_hashes_test.py
+@@ -2,7 +2,7 @@
+ import unittest
+ 
+ from conan.tools.files import check_md5, check_sha1, check_sha256
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conan.test.utils.mocks import ConanFileMock
+ from conan.test.utils.test_files import temp_folder
+ from conans.util.files import save
+diff --git a/test/unittests/util/files/strip_root_extract_test.py b/test/unittests/util/files/strip_root_extract_test.py
+index 1b8f8e5acc0..cdbdb7b4ac4 100644
+--- a/test/unittests/util/files/strip_root_extract_test.py
++++ b/test/unittests/util/files/strip_root_extract_test.py
+@@ -4,7 +4,7 @@
+ import zipfile
+ 
+ from conan.tools.files.files import untargz, unzip
+-from conans.errors import ConanException
++from conan.errors import ConanException
+ from conans.model.manifest import gather_files
+ from conan.test.utils.mocks import ConanFileMock
+ from conan.test.utils.mocks import RedirectedTestOutput

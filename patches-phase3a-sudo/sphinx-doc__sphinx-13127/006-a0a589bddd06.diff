@@ -1,0 +1,35 @@
+diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
+index 12429d231a2..f797b7f2b44 100644
+--- a/sphinx/builders/linkcheck.py
++++ b/sphinx/builders/linkcheck.py
+@@ -394,7 +394,7 @@ def __init__(
+         self.tls_cacerts = config.tls_cacerts
+ 
+         self._session = requests._Session(
+-            _to_ignore=list(map(re.compile, config.linkcheck_ignore))
++            _ignored_redirects=list(map(re.compile, config.linkcheck_ignore))
+         )
+ 
+         super().__init__(daemon=True)
+diff --git a/sphinx/util/requests.py b/sphinx/util/requests.py
+index b8773708f55..82b059673c7 100644
+--- a/sphinx/util/requests.py
++++ b/sphinx/util/requests.py
+@@ -68,7 +68,7 @@ def get_redirect_target(self, resp: requests.Response) -> str | None:
+         if resp.is_redirect:
+             location = resp.headers['location']
+             dest = urljoin(resp.url, location)
+-            if any(pat.match(dest) for pat in self.to_ignore):
++            if any(pat.match(dest) for pat in self._ignored_redirects):
+                 raise _IgnoredRedirection(
+                     location=location,
+                     status_code=resp.status_code,
+@@ -76,7 +76,7 @@ def get_redirect_target(self, resp: requests.Response) -> str | None:
+         return super().get_redirect_target(resp)
+ 
+     def __init__(self, *args: Any, **kwargs: Any) -> None:
+-        self.to_ignore: list[re.Pattern[str]] = kwargs.pop('_to_ignore', [])
++        self._ignored_redirects: list[re.Pattern[str]] = kwargs.pop('_ignored_redirects', [])
+         super().__init__(*args, **kwargs)
+ 
+     def request(  # type: ignore[override]

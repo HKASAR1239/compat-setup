@@ -1,0 +1,13 @@
+diff --git a/src/tox/config/cli/parser.py b/src/tox/config/cli/parser.py
+index 24e06b5a79..068fbca231 100644
+--- a/src/tox/config/cli/parser.py
++++ b/src/tox/config/cli/parser.py
+@@ -233,7 +233,7 @@ def __call__(
+             nargs="+",
+             metavar="path",
+             of_type=list[str],
+-            help="for Python discovery first try the Python executables under these paths",
++            help="for Python discovery first try these Python executables",
+             default=[],
+         )
+         list_deps = sub_parser.add_mutually_exclusive_group()
