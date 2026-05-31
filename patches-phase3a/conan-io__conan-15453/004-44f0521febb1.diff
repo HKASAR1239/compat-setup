@@ -1,0 +1,1843 @@
+diff --git a/conan/api/model.py b/conan/api/model.py
+index d1687197e00..8fae75c48d4 100644
+--- a/conan/api/model.py
++++ b/conan/api/model.py
+@@ -135,6 +135,18 @@ class PackagesList:
+     def __init__(self):
+         self.recipes = {}
+ 
++    def split(self):
++        """
++        Returns a list of PackageList, splitted one per reference.
++        This can be useful to parallelize things like upload, parallelizing per-reference
++        """
++        result = []
++        for r, content in self.recipes.items():
++            subpkglist = PackagesList()
++            subpkglist.recipes[r] = content
++            result.append(subpkglist)
++        return result
++
+     def only_recipes(self):
+         result = {}
+         for ref, ref_dict in self.recipes.items():
+diff --git a/conan/api/output.py b/conan/api/output.py
+index f161ee48464..9701434ab05 100644
+--- a/conan/api/output.py
++++ b/conan/api/output.py
+@@ -1,6 +1,7 @@
+ import fnmatch
+ import sys
+ import time
++from threading import Lock
+ 
+ from colorama import Fore, Style
+ 
+@@ -54,6 +55,7 @@ class ConanOutput:
+     _conan_output_level = LEVEL_STATUS
+     _silent_warn_tags = []
+     _warnings_as_errors = []
++    lock = Lock()
+ 
+     def __init__(self, scope=""):
+         self.stream = sys.stderr
+@@ -127,8 +129,11 @@ def write(self, data, fg=None, bg=None, newline=False):
+ 
+         if newline:
+             data = "%s\n" % data
+-        self.stream.write(data)
+-        self.stream.flush()
++
++        with self.lock:
++            self.stream.write(data)
++            self.stream.flush()
++
+         return self
+ 
+     def rewrite_line(self, line):
+@@ -162,8 +167,9 @@ def _write_message(self, msg, fg=None, bg=None):
+         else:
+             ret += "{}".format(msg)
+ 
+-        self.stream.write("{}\n".format(ret))
+-        self.stream.flush()
++        with self.lock:
++            self.stream.write("{}\n".format(ret))
++            self.stream.flush()
+ 
+     def trace(self, msg):
+         if self._conan_output_level <= LEVEL_TRACE:
+diff --git a/conan/api/subapi/cache.py b/conan/api/subapi/cache.py
+index f818c86ba46..55e986bbb5f 100644
+--- a/conan/api/subapi/cache.py
++++ b/conan/api/subapi/cache.py
+@@ -13,7 +13,7 @@
+ from conans.model.package_ref import PkgReference
+ from conans.model.recipe_ref import RecipeReference
+ from conans.util.dates import revision_timestamp_now
+-from conans.util.files import rmdir, gzopen_without_timestamps
++from conans.util.files import rmdir, gzopen_without_timestamps, mkdir
+ 
+ 
+ class CacheAPI:
+@@ -113,6 +113,7 @@ def save(self, package_list, tgz_path):
+         cache_folder = self.conan_api.cache_folder
+         app = ConanApp(self.conan_api)
+         out = ConanOutput()
++        mkdir(os.path.dirname(tgz_path))
+         name = os.path.basename(tgz_path)
+         with open(tgz_path, "wb") as tgz_handle:
+             tgz = gzopen_without_timestamps(name, mode="w", fileobj=tgz_handle)
+diff --git a/conan/api/subapi/list.py b/conan/api/subapi/list.py
+index 193ce590392..343992ac0a2 100644
+--- a/conan/api/subapi/list.py
++++ b/conan/api/subapi/list.py
+@@ -221,45 +221,72 @@ def explain_missing_binaries(self, ref, conaninfo, remotes):
+ 
+ 
+ class _BinaryDistance:
+-    def __init__(self, pref, binary_config, expected_config, remote=None):
++    def __init__(self, pref, binary, expected, remote=None):
+         self.remote = remote
+         self.pref = pref
+-        self.binary_config = binary_config
+-
+-        # Settings
+-        self.platform_diff = {}
+-        self.settings_diff = {}
+-        binary_settings = binary_config.get("settings", {})
+-        expected_settings = expected_config.get("settings", {})
+-        for k, v in expected_settings.items():
+-            value = binary_settings.get(k)
+-            if value is not None and value != v:
+-                diff = self.platform_diff if k in ("os", "arch") else self.settings_diff
+-                diff.setdefault("expected", []).append(f"{k}={v}")
+-                diff.setdefault("existing", []).append(f"{k}={value}")
+-
+-        # Options
+-        self.options_diff = {}
+-        binary_options = binary_config.get("options", {})
+-        expected_options = expected_config.get("options", {})
+-        for k, v in expected_options.items():
+-            value = binary_options.get(k)
+-            if value is not None and value != v:
+-                self.options_diff.setdefault("expected", []).append(f"{k}={v}")
+-                self.options_diff.setdefault("existing", []).append(f"{k}={value}")
+-
+-        # Requires
+-        self.deps_diff = {}
+-        binary_requires = binary_config.get("requires", [])
+-        expected_requires = expected_config.get("requires", [])
++        self.binary_config = binary
++
++        # Settings, special handling for os/arch
++        binary_settings = binary.get("settings", {})
++        expected_settings = expected.get("settings", {})
++
++        platform = {k: v for k, v in binary_settings.items() if k in ("os", "arch")}
++        expected_platform = {k: v for k, v in expected_settings.items() if k in ("os", "arch")}
++        self.platform_diff = self._calculate_diff(platform, expected_platform)
++
++        binary_settings = {k: v for k, v in binary_settings.items() if k not in ("os", "arch")}
++        expected_settings = {k: v for k, v in expected_settings.items() if k not in ("os", "arch")}
++        self.settings_diff = self._calculate_diff(binary_settings, expected_settings)
++
++        self.settings_target_diff = self._calculate_diff(binary, expected, "settings_target")
++        self.options_diff = self._calculate_diff(binary, expected, "options")
++        self.deps_diff = self._requirement_diff(binary, expected, "requires")
++        self.build_requires_diff = self._requirement_diff(binary, expected, "build_requires")
++        self.python_requires_diff = self._requirement_diff(binary, expected, "python_requires")
++        self.confs_diff = self._calculate_diff(binary,  expected, "conf")
++
++    @staticmethod
++    def _requirement_diff(binary_requires, expected_requires, item):
++        binary_requires = binary_requires.get(item, {})
++        expected_requires = expected_requires.get(item, {})
++        output = {}
+         binary_requires = [RecipeReference.loads(r) for r in binary_requires]
+         expected_requires = [RecipeReference.loads(r) for r in expected_requires]
+         binary_requires = {r.name: r for r in binary_requires}
+         for r in expected_requires:
+             existing = binary_requires.get(r.name)
+             if not existing or r != existing:
+-                self.deps_diff.setdefault("expected", []).append(repr(r))
+-                self.deps_diff.setdefault("existing", []).append(repr(existing))
++                output.setdefault("expected", []).append(repr(r))
++                output.setdefault("existing", []).append(repr(existing))
++        expected_requires = {r.name: r for r in expected_requires}
++        for r in binary_requires.values():
++            existing = expected_requires.get(r.name)
++            if not existing or r != existing:
++                if repr(existing) not in output.get("expected", ()):
++                    output.setdefault("expected", []).append(repr(existing))
++                if repr(r) not in output.get("existing", ()):
++                    output.setdefault("existing", []).append(repr(r))
++        return output
++
++    @staticmethod
++    def _calculate_diff(binary_confs, expected_confs, item=None):
++        if item is not None:
++            binary_confs = binary_confs.get(item, {})
++            expected_confs = expected_confs.get(item, {})
++        output = {}
++        for k, v in expected_confs.items():
++            value = binary_confs.get(k)
++            if value != v:
++                output.setdefault("expected", []).append(f"{k}={v}")
++                output.setdefault("existing", []).append(f"{k}={value}")
++        for k, v in binary_confs.items():
++            value = expected_confs.get(k)
++            if value != v:
++                if f"{k}={value}" not in output.get("expected", ()):
++                    output.setdefault("expected", []).append(f"{k}={value}")
++                if f"{k}={v}" not in output.get("existing", ()):
++                    output.setdefault("existing", []).append(f"{k}={v}")
++        return output
+ 
+     def __lt__(self, other):
+         return self.distance < other.distance
+@@ -269,22 +296,38 @@ def explanation(self):
+             return "This binary belongs to another OS or Architecture, highly incompatible."
+         if self.settings_diff:
+             return "This binary was built with different settings."
++        if self.settings_target_diff:
++            return "This binary was built with different settings_target."
+         if self.options_diff:
+             return "This binary was built with the same settings, but different options"
+         if self.deps_diff:
+             return "This binary has same settings and options, but different dependencies"
++        if self.build_requires_diff:
++            return "This binary has same settings, options and dependencies, but different build_requires"
++        if self.python_requires_diff:
++            return "This binary has same settings, options and dependencies, but different python_requires"
++        if self.confs_diff:
++            return "This binary has same settings, options and dependencies, but different confs"
+         return "This binary is an exact match for the defined inputs"
+ 
+     @property
+     def distance(self):
+         return (len(self.platform_diff.get("expected", [])),
+                 len(self.settings_diff.get("expected", [])),
++                len(self.settings_target_diff.get("expected", [])),
+                 len(self.options_diff.get("expected", [])),
+-                len(self.deps_diff.get("expected", [])))
++                len(self.deps_diff.get("expected", [])),
++                len(self.build_requires_diff.get("expected", [])),
++                len(self.python_requires_diff.get("expected", [])),
++                len(self.confs_diff.get("expected", [])))
+ 
+     def serialize(self):
+         return {"platform": self.platform_diff,
+                 "settings": self.settings_diff,
++                "settings_target": self.settings_target_diff,
+                 "options": self.options_diff,
+                 "dependencies": self.deps_diff,
++                "build_requires": self.build_requires_diff,
++                "python_requires": self.python_requires_diff,
++                "confs": self.confs_diff,
+                 "explanation": self.explanation()}
+diff --git a/conan/api/subapi/upload.py b/conan/api/subapi/upload.py
+index 28e9b01496e..354989d72bd 100644
+--- a/conan/api/subapi/upload.py
++++ b/conan/api/subapi/upload.py
+@@ -1,4 +1,6 @@
+ import os
++import time
++from multiprocessing.pool import ThreadPool
+ 
+ from conan.api.output import ConanOutput
+ from conan.internal.cache.home_paths import HomePaths
+@@ -57,6 +59,48 @@ def upload(self, package_list, remote):
+         executor = UploadExecutor(app)
+         executor.upload(package_list, remote)
+ 
++    def upload_full(self, package_list, remote, enabled_remotes, check_integrity=False, force=False,
++                    metadata=None, dry_run=False):
++        """ Does the whole process of uploading, including the possibility of parallelizing
++        per recipe:
++        - calls check_integrity
++        - checks which revision already exist in the server (not necessary to upoad)
++        - prepare the artifacts to upload (compress .tgz)
++        - execute the actual upload
++        - upload potential sources backups
++        """
++
++        def _upload_pkglist(pkglist, subtitle=lambda _: None):
++            if check_integrity:
++                subtitle("Checking integrity of cache packages")
++                self.conan_api.cache.check_integrity(pkglist)
++            # Check if the recipes/packages are in the remote
++            subtitle("Checking server existing packages")
++            self.check_upstream(pkglist, remote, enabled_remotes, force)
++            subtitle("Preparing artifacts for upload")
++            self.prepare(pkglist, enabled_remotes, metadata)
++
++            if not dry_run:
++                subtitle("Uploading artifacts")
++                self.upload(pkglist, remote)
++                backup_files = self.get_backup_sources(pkglist)
++                self.upload_backup_sources(backup_files)
++
++        t = time.time()
++        ConanOutput().title(f"Uploading to remote {remote.name}")
++        parallel = self.conan_api.config.get("core.upload:parallel", default=1, check_type=int)
++        thread_pool = ThreadPool(parallel) if parallel > 1 else None
++        if not thread_pool or len(package_list.recipes) <= 1:
++            _upload_pkglist(package_list, subtitle=ConanOutput().subtitle)
++        else:
++            ConanOutput().subtitle(f"Uploading with {parallel} parallel threads")
++            thread_pool.map(_upload_pkglist, package_list.split())
++        if thread_pool:
++            thread_pool.close()
++            thread_pool.join()
++        elapsed = time.time() - t
++        ConanOutput().success(f"Upload complete in {int(elapsed)}s\n")
++
+     def get_backup_sources(self, package_list=None):
+         """Get list of backup source files currently present in the cache,
+         either all of them if no argument, else filter by those belonging to the references in the package_list"""
+diff --git a/conan/cli/cli.py b/conan/cli/cli.py
+index 772dc4e03df..40183dceb68 100644
+--- a/conan/cli/cli.py
++++ b/conan/cli/cli.py
+@@ -47,35 +47,43 @@ def _add_commands(self):
+             for k, v in self._commands.items():  # Fill groups data too
+                 self._groups[v.group].append(k)
+ 
+-        custom_commands_path = HomePaths(self._conan_api.cache_folder).custom_commands_path
+-        if not os.path.isdir(custom_commands_path):
+-            return
++        conan_custom_commands_path = HomePaths(self._conan_api.cache_folder).custom_commands_path
++        # Important! This variable should be only used for testing/debugging purpose
++        developer_custom_commands_path = os.getenv("_CONAN_INTERNAL_CUSTOM_COMMANDS_PATH")
++        # Notice that in case of having same custom commands file names, the developer one has
++        # preference over the Conan default location because of the sys.path.append(xxxx)
++        custom_commands_folders = [developer_custom_commands_path, conan_custom_commands_path] \
++            if developer_custom_commands_path else [conan_custom_commands_path]
++
++        for custom_commands_path in custom_commands_folders:
++            if not os.path.isdir(custom_commands_path):
++                return
+ 
+-        sys.path.append(custom_commands_path)
+-        for module in pkgutil.iter_modules([custom_commands_path]):
+-            module_name = module[1]
+-            if module_name.startswith("cmd_"):
+-                try:
+-                    self._add_command(module_name, module_name.replace("cmd_", ""))
+-                except Exception as e:
+-                    ConanOutput().error(f"Error loading custom command '{module_name}.py': {e}",
+-                                        error_type="exception")
+-        # layers
+-        for folder in os.listdir(custom_commands_path):
+-            layer_folder = os.path.join(custom_commands_path, folder)
+-            sys.path.append(layer_folder)
+-            if not os.path.isdir(layer_folder):
+-                continue
+-            for module in pkgutil.iter_modules([layer_folder]):
++            sys.path.append(custom_commands_path)
++            for module in pkgutil.iter_modules([custom_commands_path]):
+                 module_name = module[1]
+                 if module_name.startswith("cmd_"):
+-                    module_path = f"{folder}.{module_name}"
+                     try:
+-                        self._add_command(module_path, module_name.replace("cmd_", ""),
+-                                          package=folder)
++                        self._add_command(module_name, module_name.replace("cmd_", ""))
+                     except Exception as e:
+-                        ConanOutput().error(f"Error loading custom command {module_path}: {e}",
++                        ConanOutput().error(f"Error loading custom command '{module_name}.py': {e}",
+                                             error_type="exception")
++            # layers
++            for folder in os.listdir(custom_commands_path):
++                layer_folder = os.path.join(custom_commands_path, folder)
++                sys.path.append(layer_folder)
++                if not os.path.isdir(layer_folder):
++                    continue
++                for module in pkgutil.iter_modules([layer_folder]):
++                    module_name = module[1]
++                    if module_name.startswith("cmd_"):
++                        module_path = f"{folder}.{module_name}"
++                        try:
++                            self._add_command(module_path, module_name.replace("cmd_", ""),
++                                              package=folder)
++                        except Exception as e:
++                            ConanOutput().error(f"Error loading custom command {module_path}: {e}",
++                                                error_type="exception")
+ 
+     def _add_command(self, import_path, method_name, package=None):
+         try:
+@@ -84,7 +92,9 @@ def _add_command(self, import_path, method_name, package=None):
+             if command_wrapper.doc:
+                 name = f"{package}:{command_wrapper.name}" if package else command_wrapper.name
+                 self._commands[name] = command_wrapper
+-                self._groups[command_wrapper.group].append(name)
++                # Avoiding duplicated command help messages
++                if name not in self._groups[command_wrapper.group]:
++                    self._groups[command_wrapper.group].append(name)
+             for name, value in getmembers(imported_module):
+                 if isinstance(value, ConanSubCommand):
+                     if name.startswith("{}_".format(method_name)):
+diff --git a/conan/cli/commands/cache.py b/conan/cli/commands/cache.py
+index e295824c5e8..e52456f3c3b 100644
+--- a/conan/cli/commands/cache.py
++++ b/conan/cli/commands/cache.py
+@@ -1,6 +1,6 @@
+ from conan.api.conan_api import ConanAPI
+ from conan.api.model import ListPattern, MultiPackagesList
+-from conan.api.output import cli_out_write
++from conan.api.output import cli_out_write, ConanOutput
+ from conan.cli import make_abs_path
+ from conan.cli.command import conan_command, conan_subcommand, OnceArgument
+ from conan.cli.commands.list import print_list_text, print_list_json
+@@ -101,6 +101,7 @@ def cache_check_integrity(conan_api: ConanAPI, parser, subparser, *args):
+     ref_pattern = ListPattern(args.pattern, rrev="*", package_id="*", prev="*")
+     package_list = conan_api.list.select(ref_pattern, package_query=args.package_query)
+     conan_api.cache.check_integrity(package_list)
++    ConanOutput().success("Integrity check: ok")
+ 
+ 
+ @conan_subcommand(formatters={"text": print_list_text,
+diff --git a/conan/cli/commands/graph.py b/conan/cli/commands/graph.py
+index 9c06c567bca..d9c773a00f5 100644
+--- a/conan/cli/commands/graph.py
++++ b/conan/cli/commands/graph.py
+@@ -255,17 +255,15 @@ def graph_explain(conan_api, parser,  subparser, *args):
+     # compute ref and conaninfo
+     missing = args.missing
+     for node in deps_graph.ordered_iterate():
+-        if node.binary == BINARY_MISSING:
+-            if not missing or ref_matches(node.ref, missing, is_consumer=None):
+-                ref = node.ref
+-                conaninfo = node.conanfile.info
+-                break
++        if ((not missing and node.binary == BINARY_MISSING)   # First missing binary or
++                or (missing and ref_matches(node.ref, missing, is_consumer=None))):  # specified one
++            ref = node.ref
++            conaninfo = node.conanfile.info
++            break
+     else:
+         raise ConanException("There is no missing binary")
+ 
+     pkglist = conan_api.list.explain_missing_binaries(ref, conaninfo, remotes)
+ 
+     ConanOutput().title("Closest binaries")
+-    return {
+-        "closest_binaries": pkglist.serialize(),
+-    }
++    return {"closest_binaries": pkglist.serialize()}
+diff --git a/conan/cli/commands/list.py b/conan/cli/commands/list.py
+index 48a7cdffd5a..61b067a766d 100644
+--- a/conan/cli/commands/list.py
++++ b/conan/cli/commands/list.py
+@@ -109,7 +109,7 @@ def prepare_pkglist_compact(pkglist):
+             new_rrev = f"{ref}#{rrev}"
+             timestamp = rrev_info.pop("timestamp", None)
+             if timestamp:
+-                new_rrev += f" ({timestamp_to_str(timestamp)})"
++                new_rrev += f"%{timestamp} ({timestamp_to_str(timestamp)})"
+ 
+             packages = rrev_info.pop("packages", None)
+             if packages:
+diff --git a/conan/cli/commands/upload.py b/conan/cli/commands/upload.py
+index ae67b679a95..3d1171e0436 100644
+--- a/conan/cli/commands/upload.py
++++ b/conan/cli/commands/upload.py
+@@ -101,16 +101,8 @@ def upload(conan_api: ConanAPI, parser, *args):
+         if not args.list and not args.confirm and "*" in args.pattern:
+             _ask_confirm_upload(conan_api, package_list)
+ 
+-        if args.check:
+-            conan_api.cache.check_integrity(package_list)
+-        # Check if the recipes/packages are in the remote
+-        conan_api.upload.check_upstream(package_list, remote, enabled_remotes, args.force)
+-        conan_api.upload.prepare(package_list, enabled_remotes, args.metadata)
+-
+-        if not args.dry_run:
+-            conan_api.upload.upload(package_list, remote)
+-            backup_files = conan_api.upload.get_backup_sources(package_list)
+-            conan_api.upload.upload_backup_sources(backup_files)
++        conan_api.upload.upload_full(package_list, remote, enabled_remotes, args.check,
++                                     args.force, args.metadata, args.dry_run)
+     elif args.list:
+         # Don't error on no recipes for automated workflows using list,
+         # but warn to tell the user that no packages were uploaded
+diff --git a/conan/internal/api/detect_api.py b/conan/internal/api/detect_api.py
+index 61de96e535d..e9df56f3cb2 100644
+--- a/conan/internal/api/detect_api.py
++++ b/conan/internal/api/detect_api.py
+@@ -122,7 +122,7 @@ def _get_e2k_architecture():
+     }.get(platform.processor())
+ 
+ 
+-def detect_libcxx(compiler, version):
++def detect_libcxx(compiler, version, compiler_exe=None):
+     assert isinstance(version, Version)
+ 
+     def _detect_gcc_libcxx(version_, executable):
+@@ -166,7 +166,7 @@ def _detect_gcc_libcxx(version_, executable):
+     if compiler == "apple-clang":
+         return "libc++"
+     elif compiler == "gcc":
+-        libcxx = _detect_gcc_libcxx(version, "g++")
++        libcxx = _detect_gcc_libcxx(version, compiler_exe or "g++")
+         return libcxx
+     elif compiler == "cc":
+         if platform.system() == "SunOS":
+@@ -179,7 +179,7 @@ def _detect_gcc_libcxx(version_, executable):
+         elif platform.system() == "Windows":
+             return  # by default windows will assume LLVM/Clang with VS backend
+         else:  # Linux
+-            libcxx = _detect_gcc_libcxx(version, "clang++")
++            libcxx = _detect_gcc_libcxx(version, compiler_exe or "clang++")
+             return libcxx
+     elif compiler == "sun-cc":
+         return "libCstd"
+@@ -252,17 +252,17 @@ def detect_cppstd(compiler, compiler_version):
+     return cppstd
+ 
+ 
+-def detect_compiler():
+-    """
+-    find the default compiler on the build machine
+-    search order and priority:
+-    1. CC and CXX environment variables are always top priority
+-    2. Visual Studio detection (Windows only) via vswhere or registry or environment variables
+-    3. Apple Clang (Mac only)
+-    4. cc executable
+-    5. gcc executable
+-    6. clang executable
++def detect_default_compiler():
+     """
++        find the default compiler on the build machine
++        search order and priority:
++        1. CC and CXX environment variables are always top priority
++        2. Visual Studio detection (Windows only) via vswhere or registry or environment variables
++        3. Apple Clang (Mac only)
++        4. cc executable
++        5. gcc executable
++        6. clang executable
++        """
+     output = ConanOutput(scope="detect_api")
+     cc = os.environ.get("CC", "")
+     cxx = os.environ.get("CXX", "")
+@@ -272,14 +272,14 @@ def detect_compiler():
+         if "clang" in command.lower():
+             return _clang_compiler(command)
+         if "gcc" in command or "g++" in command or "c++" in command:
+-            gcc, gcc_version = _gcc_compiler(command)
++            gcc, gcc_version, compiler_exe = _gcc_compiler(command)
+             if platform.system() == "Darwin" and gcc is None:
+                 output.error("%s detected as a frontend using apple-clang. "
+                              "Compiler not supported" % command)
+-            return gcc, gcc_version
++            return gcc, gcc_version, compiler_exe
+         if "icpx" in command or "icx" in command:
+-            intel, intel_version = _intel_compiler(command)
+-            return intel, intel_version        
++            intel, intel_version, compiler_exe = _intel_compiler(command)
++            return intel, intel_version, compiler_exe
+         if platform.system() == "SunOS" and command.lower() == "cc":
+             return _sun_cc_compiler(command)
+         if (platform.system() == "Windows" and command.rstrip('"').endswith(("cl", "cl.exe"))
+@@ -288,28 +288,28 @@ def detect_compiler():
+ 
+         # I am not able to find its version
+         output.error("Not able to automatically detect '%s' version" % command)
+-        return None, None
++        return None, None, None
+ 
+     if platform.system() == "Windows":
+         version = _detect_vs_ide_version()
+         version = {"17": "193", "16": "192", "15": "191"}.get(str(version))  # Map to compiler
+         if version:
+-            return 'msvc', Version(version)
++            return 'msvc', Version(version), None
+ 
+     if platform.system() == "SunOS":
+-        sun_cc, sun_cc_version = _sun_cc_compiler()
++        sun_cc, sun_cc_version, compiler_exe = _sun_cc_compiler()
+         if sun_cc:
+-            return sun_cc, sun_cc_version
++            return sun_cc, sun_cc_version, compiler_exe
+ 
+     if platform.system() in ["Darwin", "FreeBSD"]:
+-        clang, clang_version = _clang_compiler()  # prioritize clang
++        clang, clang_version, compiler_exe = _clang_compiler()  # prioritize clang
+         if clang:
+-            return clang, clang_version
++            return clang, clang_version, compiler_exe
+         return
+     else:
+-        gcc, gcc_version = _gcc_compiler()
++        gcc, gcc_version, compiler_exe = _gcc_compiler()
+         if gcc:
+-            return gcc, gcc_version
++            return gcc, gcc_version, compiler_exe
+         return _clang_compiler()
+ 
+ 
+@@ -338,11 +338,11 @@ def _gcc_compiler(compiler_exe="gcc"):
+             _, out = detect_runner("%s --version" % compiler_exe)
+             out = out.lower()
+             if "clang" in out:
+-                return None, None
++                return None, None, None
+ 
+         ret, out = detect_runner('%s -dumpversion' % compiler_exe)
+         if ret != 0:
+-            return None, None
++            return None, None, None
+         compiler = "gcc"
+         installed_version = re.search(r"([0-9]+(\.[0-9])?)", out).group()
+         # Since GCC 7.1, -dumpversion return the major version number
+@@ -350,9 +350,15 @@ def _gcc_compiler(compiler_exe="gcc"):
+         # number ("7.1.1").
+         if installed_version:
+             ConanOutput(scope="detect_api").info("Found %s %s" % (compiler, installed_version))
+-            return compiler, Version(installed_version)
++            return compiler, Version(installed_version), compiler_exe
+     except (Exception,):  # to disable broad-except
+-        return None, None
++        return None, None, None
++
++
++def detect_compiler():
++    ConanOutput(scope="detect_api").warning("detect_compiler() is deprecated, use detect_default_compiler()", warn_tag="deprecated")
++    compiler, version, _ = detect_default_compiler()
++    return compiler, version
+ 
+ def _intel_compiler(compiler_exe="icx"):
+     try:
+@@ -363,9 +369,9 @@ def _intel_compiler(compiler_exe="icx"):
+         installed_version = re.search(r"(202[0-9]+(\.[0-9])?)", out).group()
+         if installed_version:
+             ConanOutput(scope="detect_api").info("Found %s %s" % (compiler, installed_version))
+-            return compiler, Version(installed_version)
++            return compiler, Version(installed_version), compiler_exe
+     except (Exception,):  # to disable broad-except
+-        return None, None
++        return None, None, None
+ 
+ def _sun_cc_compiler(compiler_exe="cc"):
+     try:
+@@ -378,28 +384,28 @@ def _sun_cc_compiler(compiler_exe="cc"):
+             installed_version = re.search(r"([0-9]+\.[0-9]+)", out).group()
+         if installed_version:
+             ConanOutput(scope="detect_api").info("Found %s %s" % (compiler, installed_version))
+-            return compiler, Version(installed_version)
++            return compiler, Version(installed_version), compiler_exe
+     except (Exception,):  # to disable broad-except
+-        return None, None
++        return None, None, None
+ 
+ 
+ def _clang_compiler(compiler_exe="clang"):
+     try:
+         ret, out = detect_runner('%s --version' % compiler_exe)
+         if ret != 0:
+-            return None, None
++            return None, None, None
+         if "Apple" in out:
+             compiler = "apple-clang"
+         elif "clang version" in out:
+             compiler = "clang"
+         else:
+-            return None, None
++            return None, None, None
+         installed_version = re.search(r"([0-9]+\.[0-9])", out).group()
+         if installed_version:
+             ConanOutput(scope="detect_api").info("Found %s %s" % (compiler, installed_version))
+-            return compiler, Version(installed_version)
++            return compiler, Version(installed_version), compiler_exe
+     except (Exception,):  # to disable broad-except
+-        return None, None
++        return None, None, None
+ 
+ 
+ def _msvc_cl_compiler(compiler_exe="cl"):
+@@ -410,20 +416,20 @@ def _msvc_cl_compiler(compiler_exe="cl"):
+         compiler_exe = compiler_exe.strip('"')
+         ret, out = detect_runner(f'"{compiler_exe}" /?')
+         if ret != 0:
+-            return None, None
++            return None, None, None
+         first_line = out.splitlines()[0]
+         if "Microsoft" not in first_line:
+-            return None, None
++            return None, None, None
+         compiler = "msvc"
+         version_regex = re.search(r"(?P<major>[0-9]+)\.(?P<minor>[0-9]+)\.([0-9]+)\.?([0-9]+)?",
+                                   first_line)
+         if not version_regex:
+-            return None, None
++            return None, None, None
+         # 19.36.32535 -> 193
+         version = f"{version_regex.group('major')}{version_regex.group('minor')[0]}"
+-        return compiler, Version(version)
++        return compiler, Version(version), compiler_exe
+     except (Exception,):  # to disable broad-except
+-        return None, None
++        return None, None, None
+ 
+ 
+ def default_compiler_version(compiler, version):
+diff --git a/conan/tools/cmake/presets.py b/conan/tools/cmake/presets.py
+index cb11e2174f8..27792af73b9 100644
+--- a/conan/tools/cmake/presets.py
++++ b/conan/tools/cmake/presets.py
+@@ -6,6 +6,7 @@
+ from conan.tools.cmake.layout import get_build_folder_custom_vars
+ from conan.tools.cmake.toolchain.blocks import GenericSystemBlock
+ from conan.tools.cmake.utils import is_multi_configuration
++from conan.tools.build import build_jobs
+ from conan.tools.microsoft import is_msvc
+ from conans.client.graph.graph import RECIPE_CONSUMER
+ from conan.errors import ConanException
+@@ -189,6 +190,8 @@ def _common_preset_fields(conanfile, multiconfig, preset_prefix):
+     @staticmethod
+     def _build_preset_fields(conanfile, multiconfig, preset_prefix):
+         ret = _CMakePresets._common_preset_fields(conanfile, multiconfig, preset_prefix)
++        build_preset_jobs = build_jobs(conanfile)
++        ret["jobs"] = build_preset_jobs
+         return ret
+ 
+     @staticmethod
+diff --git a/conan/tools/cmake/toolchain/blocks.py b/conan/tools/cmake/toolchain/blocks.py
+index 7b13fb410c0..a1d7581f6a9 100644
+--- a/conan/tools/cmake/toolchain/blocks.py
++++ b/conan/tools/cmake/toolchain/blocks.py
+@@ -826,7 +826,7 @@ def context(self):
+         cmake_sysroot = self._conanfile.conf.get("tools.build:sysroot")
+         cmake_sysroot = cmake_sysroot.replace("\\", "/") if cmake_sysroot is not None else None
+ 
+-        result = self._get_winsdk_version(system_version, generator)
++        result = self._get_winsdk_version(system_version, generator_platform)
+         system_version, winsdk_version, gen_platform_sdk_version = result
+ 
+         return {"toolset": toolset,
+diff --git a/conan/tools/google/bazeldeps.py b/conan/tools/google/bazeldeps.py
+index 10da3444db0..4dffc1c4db7 100644
+--- a/conan/tools/google/bazeldeps.py
++++ b/conan/tools/google/bazeldeps.py
+@@ -117,15 +117,16 @@ def _save_lib_path(lib_, lib_path_):
+             full_path = os.path.join(libdir, f)
+             if not os.path.isfile(full_path):  # Make sure that directories are excluded
+                 continue
++            name, ext = os.path.splitext(f)
+             # Users may not name their libraries in a conventional way. For example, directly
+-            # use the basename of the lib file as lib name.
+-            if f in libs:
++            # use the basename of the lib file as lib name, e.g., cpp_info.libs = ["liblib1.a"]
++            # Issue related: https://github.com/conan-io/conan/issues/11331
++            if ext and f in libs:  # let's ensure that it has any extension
+                 _save_lib_path(f, full_path)
+                 continue
+-            name, ext = os.path.splitext(f)
+             if name not in libs and name.startswith("lib"):
+                 name = name[3:]  # libpkg -> pkg
+-             # FIXME: Should it read a conf variable to know unexpected extensions?
++            # FIXME: Should it read a conf variable to know unexpected extensions?
+             if (is_shared and ext in (".so", ".dylib", ".lib", ".dll")) or \
+                (not is_shared and ext in (".a", ".lib")):
+                 if name in libs:
+diff --git a/conans/client/cmd/uploader.py b/conans/client/cmd/uploader.py
+index f16ee7a5eae..65afb5150f5 100644
+--- a/conans/client/cmd/uploader.py
++++ b/conans/client/cmd/uploader.py
+@@ -25,7 +25,6 @@ def __init__(self, app: ConanApp):
+         self._app = app
+ 
+     def check(self, upload_bundle, remote, force):
+-        ConanOutput().subtitle("Checking server existing packages")
+         for ref, recipe_bundle in upload_bundle.refs().items():
+             self._check_upstream_recipe(ref, recipe_bundle, remote, force)
+             for pref, prev_bundle in upload_bundle.prefs(ref, recipe_bundle).items():
+@@ -81,7 +80,6 @@ def __init__(self, app: ConanApp, global_conf):
+         self._global_conf = global_conf
+ 
+     def prepare(self, upload_bundle, enabled_remotes):
+-        ConanOutput().subtitle("Preparing artifacts for upload")
+         for ref, bundle in upload_bundle.refs().items():
+             layout = self._app.cache.recipe_layout(ref)
+             conanfile_path = layout.conanfile()
+@@ -211,31 +209,30 @@ class UploadExecutor:
+     """
+     def __init__(self, app: ConanApp):
+         self._app = app
+-        self._output = ConanOutput()
+ 
+     def upload(self, upload_data, remote):
+-        ConanOutput().subtitle("Uploading artifacts")
+         for ref, bundle in upload_data.refs().items():
+             if bundle.get("upload"):
+                 self.upload_recipe(ref, bundle, remote)
+             for pref, prev_bundle in upload_data.prefs(ref, bundle).items():
+                 if prev_bundle.get("upload"):
+                     self.upload_package(pref, prev_bundle, remote)
+-        ConanOutput().success("Upload complete\n")
+ 
+     def upload_recipe(self, ref, bundle, remote):
+-        self._output.info(f"Uploading recipe '{ref.repr_notime()}'")
++        output = ConanOutput(scope=str(ref))
++        output.info(f"Uploading recipe '{ref.repr_notime()}'")
+         t1 = time.time()
+         cache_files = bundle["files"]
+ 
+         self._app.remote_manager.upload_recipe(ref, cache_files, remote)
+ 
+         duration = time.time() - t1
+-        self._output.debug(f"Upload {ref} in {duration} time")
++        output.debug(f"Upload {ref} in {duration} time")
+         return ref
+ 
+     def upload_package(self, pref, prev_bundle, remote):
+-        self._output.info(f"Uploading package '{pref.repr_notime()}'")
++        output = ConanOutput(scope=str(pref.ref))
++        output.info(f"Uploading package '{pref.repr_notime()}'")
+         cache_files = prev_bundle["files"]
+         assert (pref.revision is not None), "Cannot upload a package without PREV"
+         assert (pref.ref.revision is not None), "Cannot upload a package without RREV"
+@@ -243,7 +240,7 @@ def upload_package(self, pref, prev_bundle, remote):
+         t1 = time.time()
+         self._app.remote_manager.upload_package(pref, cache_files, remote)
+         duration = time.time() - t1
+-        self._output.debug(f"Upload {pref} in {duration} time")
++        output.debug(f"Upload {pref} in {duration} time")
+ 
+ 
+ def compress_files(files, name, dest_dir, compresslevel=None, ref=None):
+diff --git a/conans/client/conf/detect.py b/conans/client/conf/detect.py
+index de2422836ad..9048a82be2f 100644
+--- a/conans/client/conf/detect.py
++++ b/conans/client/conf/detect.py
+@@ -1,6 +1,6 @@
+ from conan.api.output import ConanOutput
+ from conan.internal.api.detect_api import detect_os, detect_arch, default_msvc_runtime, \
+-    detect_libcxx, detect_cppstd, detect_compiler, default_compiler_version
++    detect_libcxx, detect_cppstd, detect_default_compiler, default_compiler_version
+ 
+ 
+ def detect_defaults_settings():
+@@ -14,7 +14,7 @@ def detect_defaults_settings():
+     arch = detect_arch()
+     if arch:
+         result.append(("arch", arch))
+-    compiler, version = detect_compiler()
++    compiler, version, compiler_exe = detect_default_compiler()
+     if not compiler:
+         result.append(("build_type", "Release"))
+         ConanOutput().warning("No compiler was detected (one may not be needed)")
+@@ -28,7 +28,7 @@ def detect_defaults_settings():
+         result.append(("compiler.runtime", runtime))
+     if runtime_version:
+         result.append(("compiler.runtime_version", runtime_version))
+-    libcxx = detect_libcxx(compiler, version)
++    libcxx = detect_libcxx(compiler, version, compiler_exe)
+     if libcxx:
+         result.append(("compiler.libcxx", libcxx))
+     cppstd = detect_cppstd(compiler, version)
+diff --git a/conans/client/graph/graph_builder.py b/conans/client/graph/graph_builder.py
+index 58fe36bf4fe..4c644e395f1 100644
+--- a/conans/client/graph/graph_builder.py
++++ b/conans/client/graph/graph_builder.py
+@@ -1,4 +1,5 @@
+ import copy
++
+ from collections import deque
+ 
+ from conan.internal.cache.conan_reference_layout import BasicLayout
+@@ -282,11 +283,12 @@ def _create_new_node(self, node, require, graph, profile_host, profile_build, gr
+             tracking_ref = require_version.split(':', 1)
+             ref = require.ref
+             if len(tracking_ref) > 1:
+-                ref = RecipeReference.loads(str(node.ref))
++                ref = RecipeReference.loads(str(require.ref))
+                 ref.name = tracking_ref[1][:-1]  # Remove the trailing >
+             req = Requirement(ref, headers=True, libs=True, visible=True)
+             transitive = node.transitive_deps.get(req)
+-            if transitive is None:
++            if transitive is None or transitive.require.ref.user != ref.user \
++                    or transitive.require.ref.channel != ref.channel:
+                 raise ConanException(f"{node.ref} require '{ref}': didn't find a matching "
+                                      "host dependency")
+             require.ref.version = transitive.require.ref.version
+diff --git a/conans/client/loader.py b/conans/client/loader.py
+index 6039c65735e..28be532d387 100644
+--- a/conans/client/loader.py
++++ b/conans/client/loader.py
+@@ -5,6 +5,7 @@
+ import sys
+ import types
+ import uuid
++from threading import Lock
+ 
+ import yaml
+ 
+@@ -52,7 +53,7 @@ def load_basic_module(self, conanfile_path, graph_lock=None, display="", remotes
+             return conanfile, cached[1]
+ 
+         try:
+-            module, conanfile = parse_conanfile(conanfile_path)
++            module, conanfile = _parse_conanfile(conanfile_path)
+             if tested_python_requires:
+                 conanfile.python_requires = tested_python_requires
+ 
+@@ -288,10 +289,14 @@ class defining the Recipe, but also process possible existing generators
+     return result
+ 
+ 
+-def parse_conanfile(conanfile_path):
+-    module, filename = load_python_file(conanfile_path)
++_load_python_lock = Lock()  # Loading our Python files is not thread-safe (modifies sys)
++
++
++def _parse_conanfile(conanfile_path):
++    with _load_python_lock:
++        module, module_id = _load_python_file(conanfile_path)
+     try:
+-        conanfile = _parse_module(module, filename)
++        conanfile = _parse_module(module, module_id)
+         return module, conanfile
+     except Exception as e:  # re-raise with file name
+         raise ConanException("%s: %s" % (conanfile_path, str(e)))
+@@ -300,6 +305,14 @@ def parse_conanfile(conanfile_path):
+ def load_python_file(conan_file_path):
+     """ From a given path, obtain the in memory python import module
+     """
++    with _load_python_lock:
++        module, module_id = _load_python_file(conan_file_path)
++    return module, module_id
++
++
++def _load_python_file(conan_file_path):
++    """ From a given path, obtain the in memory python import module
++    """
+ 
+     if not os.path.exists(conan_file_path):
+         raise NotFoundException("%s not found!" % conan_file_path)
+diff --git a/conans/client/migrations.py b/conans/client/migrations.py
+index 08a2a92125a..ca0bc53eb43 100644
+--- a/conans/client/migrations.py
++++ b/conans/client/migrations.py
+@@ -58,11 +58,13 @@ def _apply_migrations(self, old_version):
+ 
+ 
+ def _migrate_pkg_db_lru(cache_folder, old_version):
+-    ConanOutput().warning(f"Upgrade cache from Conan version '{old_version}'")
+-    ConanOutput().warning("Running 2.0.14 Cache DB migration to add LRU column")
+     config = ConfigAPI.load_config(cache_folder)
+     storage = config.get("core.cache:storage_path") or os.path.join(cache_folder, "p")
+     db_filename = os.path.join(storage, 'cache.sqlite3')
++    if not os.path.exists(db_filename):
++        return
++    ConanOutput().warning(f"Upgrade cache from Conan version '{old_version}'")
++    ConanOutput().warning("Running 2.0.14 Cache DB migration to add LRU column")
+     connection = sqlite3.connect(db_filename, isolation_level=None,
+                                  timeout=1, check_same_thread=False)
+     try:
+diff --git a/conans/client/profile_loader.py b/conans/client/profile_loader.py
+index 54b6d3d0140..fc83a734416 100644
+--- a/conans/client/profile_loader.py
++++ b/conans/client/profile_loader.py
+@@ -126,8 +126,14 @@ def _load_profile(self, profile_name, cwd):
+                    "profile_name": file_path,
+                    "conan_version": conan_version,
+                    "detect_api": detect_api}
++
+         rtemplate = Environment(loader=FileSystemLoader(base_path)).from_string(text)
+-        text = rtemplate.render(context)
++
++        try:
++            text = rtemplate.render(context)
++        except Exception as e:
++            raise ConanException(f"Error while rendering the profile template file '{profile_path}'. "
++                                 f"Check your Jinja2 syntax: {str(e)}")
+ 
+         try:
+             return self._recurse_load_profile(text, profile_path)
+diff --git a/conans/model/conf.py b/conans/model/conf.py
+index b8677a0d5e9..30e1b169efd 100644
+--- a/conans/model/conf.py
++++ b/conans/model/conf.py
+@@ -21,6 +21,7 @@
+     "core.version_ranges:resolve_prereleases": "Whether version ranges can resolve to pre-releases or not",
+     "core.upload:retry": "Number of retries in case of failure when uploading to Conan server",
+     "core.upload:retry_wait": "Seconds to wait between upload attempts to Conan server",
++    "core.upload:parallel": "Number of concurrent threads to upload packages",
+     "core.download:parallel": "Number of concurrent threads to download packages",
+     "core.download:retry": "Number of retries in case of failure when downloading from Conan server",
+     "core.download:retry_wait": "Seconds to wait between download attempts from Conan server",
+diff --git a/conans/model/settings.py b/conans/model/settings.py
+index 189bb71185d..d55e0f37452 100644
+--- a/conans/model/settings.py
++++ b/conans/model/settings.py
+@@ -106,6 +106,11 @@ def _get_child(self, item):
+             raise undefined_field(self._name, item, None, self._value)
+         if self._value is None:
+             raise ConanException("'%s' value not defined" % self._name)
++        return self._get_definition()
++
++    def _get_definition(self):
++        if self._value not in self._definition and "ANY" in self._definition:
++            return self._definition["ANY"]
+         return self._definition[self._value]
+ 
+     def __getattr__(self, item):
+@@ -142,7 +147,7 @@ def values_list(self):
+         partial_name = ".".join(self._name.split(".")[1:])
+         result.append((partial_name, self._value))
+         if isinstance(self._definition, dict):
+-            sub_config_dict = self._definition[self._value]
++            sub_config_dict = self._get_definition()
+             result.extend(sub_config_dict.values_list)
+         return result
+ 
+@@ -150,7 +155,7 @@ def validate(self):
+         if self._value is None and None not in self._definition:
+             raise ConanException("'%s' value not defined" % self._name)
+         if isinstance(self._definition, dict):
+-            self._definition[self._value].validate()
++            self._get_definition().validate()
+ 
+     def possible_values(self):
+         if isinstance(self._definition, list):
+diff --git a/conans/test/conftest.py b/conans/test/conftest.py
+index 64807172210..c0161ca4175 100644
+--- a/conans/test/conftest.py
++++ b/conans/test/conftest.py
+@@ -91,6 +91,9 @@
+             "path": {'Windows': 'C:/cmake/cmake-3.23.1-win64-x64/bin',
+                      'Darwin': '/Users/jenkins/cmake/cmake-3.23.1/bin',
+                      'Linux': "/usr/share/cmake-3.23.5/bin"}
++        },
++        "3.28": {
++            "disabled": True  # TODO: Still not in CI
+         }
+     },
+     'ninja': {
+diff --git a/conans/test/functional/test_profile_detect_api.py b/conans/test/functional/test_profile_detect_api.py
+index 3c2b732389f..1601e97ac77 100644
+--- a/conans/test/functional/test_profile_detect_api.py
++++ b/conans/test/functional/test_profile_detect_api.py
+@@ -11,12 +11,13 @@ def test_profile_detect_compiler(self):
+ 
+         client = TestClient()
+         tpl1 = textwrap.dedent("""
+-            {% set compiler, version = detect_api.detect_compiler() %}
++            {% set compiler, version, compiler_exe = detect_api.detect_default_compiler() %}
+             {% set runtime, _ = detect_api.default_msvc_runtime(compiler) %}
+             [settings]
+             compiler={{compiler}}
+             compiler.version={{detect_api.default_compiler_version(compiler, version)}}
+             compiler.runtime={{runtime}}
++            compiler.libcxx={{detect_api.detect_libcxx(compiler, version, compiler_exe)}}
+             compiler.cppstd={{detect_api.default_cppstd(compiler, version)}}
+ 
+             [conf]
+diff --git a/conans/test/functional/toolchains/cmake/test_cmake_toolchain.py b/conans/test/functional/toolchains/cmake/test_cmake_toolchain.py
+index f1d4622676d..a7467411c55 100644
+--- a/conans/test/functional/toolchains/cmake/test_cmake_toolchain.py
++++ b/conans/test/functional/toolchains/cmake/test_cmake_toolchain.py
+@@ -556,21 +556,39 @@ def test_cmake_toolchain_runtime_types_cmake_older_than_3_15():
+ 
+ 
+ @pytest.mark.skipif(platform.system() != "Windows", reason="Only for windows")
+-# @pytest.mark.tool("cmake", "3.28")
+-def test_cmake_toolchain_winsdk_version():
+-    client = TestClient(path_with_spaces=False)
+-    client.run("new cmake_lib -d name=hello -d version=0.1")
+-    cmake = client.load("CMakeLists.txt")
+-    # TODO: when we have CMake 3.27 in CI
+-    # cmake = cmake.replace("cmake_minimum_required(VERSION 3.15)",
+-    #                       "cmake_minimum_required(VERSION 3.27)")
+-    cmake += 'message(STATUS "CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION = ' \
+-             '${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")'
+-    client.save({"CMakeLists.txt": cmake})
+-    client.run("create . -s arch=x86_64 -s compiler.version=193 "
+-               "-c tools.microsoft:winsdk_version=8.1")
+-    assert "CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION = 8.1" in client.out
+-    assert "Conan toolchain: CMAKE_GENERATOR_PLATFORM=x64" in client.out
++class TestWinSDKVersion:
++    def test_cmake_toolchain_winsdk_version(self):
++        # This test passes also with CMake 3.28, as long as cmake_minimum_required(VERSION 3.27)
++        # is not defined
++        client = TestClient(path_with_spaces=False)
++        client.run("new cmake_lib -d name=hello -d version=0.1")
++        cmake = client.load("CMakeLists.txt")
++        cmake += 'message(STATUS "CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION = ' \
++                 '${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")'
++        client.save({"CMakeLists.txt": cmake})
++        client.run("create . -s arch=x86_64 -s compiler.version=193 "
++                   "-c tools.microsoft:winsdk_version=8.1")
++        assert "CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION = 8.1" in client.out
++        assert "Conan toolchain: CMAKE_GENERATOR_PLATFORM=x64" in client.out
++        assert "Conan toolchain: CMAKE_GENERATOR_PLATFORM=x64,version" not in client.out
++
++    @pytest.mark.tool("cmake", "3.28")
++    @pytest.mark.tool("visual_studio", "17")
++    def test_cmake_toolchain_winsdk_version2(self):
++        # https://github.com/conan-io/conan/issues/15372
++        client = TestClient(path_with_spaces=False)
++        client.run("new cmake_lib -d name=hello -d version=0.1")
++        cmake = client.load("CMakeLists.txt")
++        cmake = cmake.replace("cmake_minimum_required(VERSION 3.15)",
++                              "cmake_minimum_required(VERSION 3.27)")
++        cmake += 'message(STATUS "CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION = ' \
++                 '${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")'
++        client.save({"CMakeLists.txt": cmake})
++        client.run("create . -s arch=x86_64 -s compiler.version=193 "
++                   "-c tools.microsoft:winsdk_version=8.1 "
++                   '-c tools.cmake.cmaketoolchain:generator="Visual Studio 17"')
++        assert "CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION = 8.1" in client.out
++        assert "Conan toolchain: CMAKE_GENERATOR_PLATFORM=x64,version=8.1" in client.out
+ 
+ 
+ @pytest.mark.tool("cmake", "3.23")
+diff --git a/conans/test/integration/build_requires/build_requires_test.py b/conans/test/integration/build_requires/build_requires_test.py
+index 229fd7a5806..da3a5af71e4 100644
+--- a/conans/test/integration/build_requires/build_requires_test.py
++++ b/conans/test/integration/build_requires/build_requires_test.py
+@@ -406,17 +406,9 @@ def test_track_host_error_nothost(self):
+         if no host requirement is defined, it will be an error
+         """
+         c = TestClient()
+-        pkg = textwrap.dedent("""
+-            from conan import ConanFile
+-            class ProtoBuf(ConanFile):
+-                name = "protobuf"
+-                def build_requirements(self):
+-                    self.tool_requires("protobuf/<host_version>")
+-            """)
+-
+-        c.save({"pkg/conanfile.py": pkg})
+-        c.run("install pkg", assert_error=True)
+-        assert "ERROR: protobuf/None require 'protobuf/<host_version>': " \
++        c.save({"conanfile.py": GenConanfile().with_build_requirement("protobuf/<host_version>")})
++        c.run("install .", assert_error=True)
++        assert "ERROR:  require 'protobuf/<host_version>': " \
+                "didn't find a matching host dependency" in c.out
+ 
+     def test_track_host_errors_trait(self):
+@@ -489,12 +481,14 @@ def test(self):
+ 
+     def test_overriden_host_version_transitive_deps(self):
+         """
+-        Make the tool_requires follow the regular require with the expression "<host_version>" for a transitive_deps
++        Make the tool_requires follow the regular require with the expression "<host_version>"
++        for a transitive_deps
+         """
+         c = TestClient()
+         c.save({"protobuf/conanfile.py": GenConanfile("protobuf"),
+                 "pkg/conanfile.py": GenConanfile("pkg", "0.1").with_requirement("protobuf/[>=1.0]"),
+-                "app/conanfile.py": GenConanfile().with_requires("pkg/0.1").with_tool_requirement("protobuf/<host_version>")})
++                "app/conanfile.py": GenConanfile().with_requires("pkg/0.1")
++                                                  .with_tool_requirement("protobuf/<host_version>")})
+         c.run("create protobuf --version=1.0")
+         c.run("create protobuf --version=1.1")
+         c.run("create pkg")
+@@ -516,8 +510,8 @@ def test_overriden_host_version_transitive_deps(self):
+         ("libgettext>", False, "gettext/0.2#d9f9eaeac9b6e403b271f04e04149df2"),
+         # Error cases, just checking that we fail gracefully - no tracebacks
+         ("libgettext", True, "Package 'gettext/<host_version:libgettext' not resolved"),
+-        (":>", True, "app/1.0 require ':/1.0': didn't find a matching host dependency"),
+-        (">", True, "app/1.0 require '/1.0': didn't find a matching host dependency"),
++        (":>", True, "app/1.0 require ':/<host_version::>': didn't find a matching host dependency"),
++        (">", True, "app/1.0 require '/<host_version:>': didn't find a matching host dependency"),
+         (":", True, " Package 'gettext/<host_version::' not resolved"),
+         ("", True, "Package 'gettext/<host_version:' not resolved: No remote defined")
+     ])
+@@ -534,6 +528,42 @@ def test_host_version_different_ref(self, host_version, assert_error, assert_msg
+         tc.run("create app", assert_error=assert_error)
+         assert assert_msg in tc.out
+ 
++    @pytest.mark.parametrize("requires_tag,tool_requires_tag,fails", [
++        ("user/channel", "user/channel", False),
++        ("", "user/channel", True),
++        ("auser/achannel", "anotheruser/anotherchannel", True),
++    ])
++    def test_overriden_host_version_user_channel(self, requires_tag, tool_requires_tag, fails):
++        """
++        Make the tool_requires follow the regular require with the expression "<host_version>"
++        """
++        c = TestClient()
++        pkg = textwrap.dedent(f"""
++            from conan import ConanFile
++            class ProtoBuf(ConanFile):
++                name = "pkg"
++                version = "0.1"
++                def requirements(self):
++                    self.requires("protobuf/1.0@{requires_tag}")
++                def build_requirements(self):
++                    self.tool_requires("protobuf/<host_version>@{tool_requires_tag}")
++            """)
++        c.save({"protobuf/conanfile.py": GenConanfile("protobuf"),
++                "pkg/conanfile.py": pkg})
++        if "/" in requires_tag:
++            user, channel = requires_tag.split("/", 1)
++            user_channel = f"--user={user} --channel={channel}"
++        else:
++            user_channel = ""
++        c.run(f"create protobuf --version=1.0 {user_channel}")
++
++        c.run("create pkg", assert_error=fails)
++        if fails:
++            assert f"pkg/0.1 require 'protobuf/<host_version>@{tool_requires_tag}': didn't find a " \
++                   "matching host dependency" in c.out
++        else:
++            assert "pkg/0.1: Package '39f6a091994d2d080081ea888d75ef65c1d04c8d' created" in c.out
++
+ 
+ def test_build_missing_build_requires():
+     c = TestClient()
+diff --git a/conans/test/integration/command/upload/test_upload_parallel.py b/conans/test/integration/command/upload/test_upload_parallel.py
+index 99040901e4b..c51d1e2afc9 100644
+--- a/conans/test/integration/command/upload/test_upload_parallel.py
++++ b/conans/test/integration/command/upload/test_upload_parallel.py
+@@ -1,14 +1,9 @@
+-import textwrap
+-
+-import pytest
+-from mock import patch
+ from requests import ConnectionError
+ 
+ from conans.test.assets.genconanfile import GenConanfile
+-from conans.test.utils.tools import TestClient, NO_SETTINGS_PACKAGE_ID, TestRequester
++from conans.test.utils.tools import TestClient, TestRequester
+ 
+ 
+-@pytest.mark.xfail(reason="Upload parallel not migrated yet")
+ def test_upload_parallel_error():
+     """Cause an error in the parallel transfer and see some message"""
+ 
+@@ -22,72 +17,45 @@ def put(self, *args, **kwargs):
+                 return super(FailOnReferencesUploader, self).put(*args, **kwargs)
+ 
+     client = TestClient(requester_class=FailOnReferencesUploader, default_server_user=True)
++    client.save({"global.conf": f"core.upload:parallel=2\ncore.upload:retry_wait=0"},
++                path=client.cache.cache_folder)
+     client.save({"conanfile.py": GenConanfile()})
+     client.run('remote login default admin -p password')
+     for index in range(4):
+         client.run('create . --name=lib{} --version=1.0 --user=user --channel=channel'.format(index))
+-    client.run('upload lib* --parallel -c -r default --retry-wait=0', assert_error=True)
++    client.run('upload lib* -c -r default', assert_error=True)
+     assert "Connection fails with lib2 and lib4 references!" in client.out
+     assert "Execute upload again to retry upload the failed files" in client.out
+ 
+ 
+-@pytest.mark.xfail(reason="Upload parallel not migrated yet")
+ def test_upload_parallel_success():
+     """Upload 2 packages in parallel with success"""
+ 
+     client = TestClient(default_server_user=True)
++    client.save({"global.conf": f"core.upload:parallel=2"}, path=client.cache.cache_folder)
+     client.save({"conanfile.py": GenConanfile()})
+     client.run('create . --name=lib0 --version=1.0 --user=user --channel=channel')
+-    assert "lib0/1.0@user/channel: Package '{}' created".format(NO_SETTINGS_PACKAGE_ID) in client.out
+     client.run('create . --name=lib1 --version=1.0 --user=user --channel=channel')
+-    assert "lib1/1.0@user/channel: Package '{}' created".format(NO_SETTINGS_PACKAGE_ID) in client.out
+     client.run('remote login default admin -p password')
+-    client.run('upload lib* --parallel -c -r default')
+-    assert "Uploading lib0/1.0@user/channel to remote 'default'" in client.out
+-    assert "Uploading lib1/1.0@user/channel to remote 'default'" in client.out
++    client.run('upload lib* -c -r default')
++    assert "Uploading recipe 'lib0/1.0@user/channel#4d670581ccb765839f2239cc8dff8fbd'" in client.out
++    assert "Uploading recipe 'lib1/1.0@user/channel#4d670581ccb765839f2239cc8dff8fbd'" in client.out
+     client.run('search lib0/1.0@user/channel -r default')
+     assert "lib0/1.0@user/channel" in client.out
+     client.run('search lib1/1.0@user/channel -r default')
+     assert "lib1/1.0@user/channel" in client.out
+ 
+ 
+-@pytest.mark.xfail(reason="Upload parallel not migrated yet")
+ def test_upload_parallel_fail_on_interaction():
+     """Upload 2 packages in parallel and fail because non_interactive forced"""
+-
+     client = TestClient(default_server_user=True)
++    client.save({"global.conf": f"core.upload:parallel=2\ncore:non_interactive=True"},
++                path=client.cache.cache_folder)
+     client.save({"conanfile.py": GenConanfile()})
+     num_references = 2
+     for index in range(num_references):
+         client.run('create . --name=lib{} --version=1.0 --user=user --channel=channel'.format(index))
+-        assert "lib{}/1.0@user/channel: Package '{}' created".format(
+-            index,
+-            NO_SETTINGS_PACKAGE_ID) in client.out
+-    client.run('remote logout default')
+-    client.run('upload lib* --parallel -c -r default', assert_error=True)
+-    assert "ERROR: lib0/1.0@user/channel: Upload recipe to 'default' failed: " \
+-           "Conan interactive mode disabled. [Remote: default]" in client.out
+ 
+-
+-@pytest.mark.xfail(reason="Upload parallel not migrated yet")
+-def test_beat_character_long_upload():
+-    client = TestClient(default_server_user=True)
+-    slow_conanfile = textwrap.dedent("""
+-        from conan import ConanFile
+-        from conan.tools.files import copy
+-        class MyPkg(ConanFile):
+-            exports = "*"
+-            def package(self):
+-                copy(self, "*", self.source_folder, self.package_folder)
+-        """)
+-    client.save({"conanfile.py": slow_conanfile,
+-                 "hello.cpp": ""})
+-    client.run("create . --name=pkg --version=0.1 --user=user --channel=stable")
+-    client.run("remote login default admin --password=password")
+-    with patch("conans.util.progress_bar.TIMEOUT_BEAT_SECONDS", -1):
+-        with patch("conans.util.progress_bar.TIMEOUT_BEAT_CHARACTER", "%&$"):
+-            client.run("upload pkg/0.1@user/stable -r default")
+-    out = "".join(str(client.out).splitlines())
+-    assert "Compressing package...%&$Uploading conan_package.tgz -> pkg/0.1@user/stable" in out
+-    assert "%&$Uploading conan_export.tgz" in out
+-    assert "%&$Uploading conaninfo.txt" in out
++    client.run('remote logout default')
++    client.run('upload lib* -c -r default', assert_error=True)
++    assert "ERROR: Conan interactive mode disabled. [Remote: default]" in client.out
+diff --git a/conans/test/integration/command_v2/custom_commands_test.py b/conans/test/integration/command_v2/custom_commands_test.py
+index 9c33e936cc2..d9050bc53f6 100644
+--- a/conans/test/integration/command_v2/custom_commands_test.py
++++ b/conans/test/integration/command_v2/custom_commands_test.py
+@@ -1,7 +1,9 @@
+ import os
+ import textwrap
+ 
++from conans.test.utils.test_files import temp_folder
+ from conans.test.utils.tools import TestClient
++from conans.util.env import environment_update
+ 
+ 
+ class TestCustomCommands:
+@@ -254,3 +256,33 @@ def mycommand(conan_api, parser, *args, **kwargs):
+         client.run("danimtb:mycommand")
+         foldername = os.path.basename(client.cache_folder)
+         assert f'Conan cache folder from cmd_mycode: {foldername}' in client.out
++
++    def test_custom_command_from_other_location(self):
++        """
++        Tests that setting developer env variable ``_CONAN_INTERNAL_CUSTOM_COMMANDS_PATH``
++        will append that folder to the Conan custom command default location.
++        """
++        myhello = textwrap.dedent("""
++            from conan.api.output import cli_out_write
++            from conan.cli.command import conan_command
++
++            @conan_command(group="custom commands")
++            def hello(conan_api, parser, *args, **kwargs):
++                '''
++                My Hello doc
++                '''
++                cli_out_write("Hello {}!")
++            """)
++
++        client = TestClient()
++        my_local_layer_path = temp_folder(path_with_spaces=False)
++        layer_path = os.path.join(client.cache_folder, 'extensions', 'commands')
++        client.save({os.path.join(layer_path, 'cmd_hello.py'): myhello.format("world")})
++        client.save({"cmd_hello.py": myhello.format("Overridden")}, path=my_local_layer_path)
++        with environment_update({"_CONAN_INTERNAL_CUSTOM_COMMANDS_PATH": my_local_layer_path}):
++            client.run("hello")
++            # Local commands have preference over Conan custom ones if they collide
++            assert "Hello Overridden!" in client.out
++        # Without the variable it only loads the default custom commands location
++        client.run("hello")
++        assert "Hello world!" in client.out
+diff --git a/conans/test/integration/command_v2/list_test.py b/conans/test/integration/command_v2/list_test.py
+index 5d72a9ce9d1..47abd3c4f11 100644
+--- a/conans/test/integration/command_v2/list_test.py
++++ b/conans/test/integration/command_v2/list_test.py
+@@ -778,14 +778,16 @@ def test_list_compact_no_settings_no_options(self):
+         c.run("create pkg -s os=Windows -s arch=x86")
+         c.run("create other")
+         c.run("list *:* --format=compact")
+-        expected_output = re.sub(r"\(.*\)", "(timestamp)", c.stdout)
++        expected_output = re.sub(r"%.* ", "%timestamp ",
++                                 re.sub(r"\(.*\)", "(timestamp)", c.stdout))
++
+         expected = textwrap.dedent("""\
+             Local Cache
+               other/1.0
+-                other/1.0#d3c8cc5e6d23ca8c6f0eaa6285c04cbd (timestamp)
++                other/1.0#d3c8cc5e6d23ca8c6f0eaa6285c04cbd%timestamp (timestamp)
+                   other/1.0#d3c8cc5e6d23ca8c6f0eaa6285c04cbd:da39a3ee5e6b4b0d3255bfef95601890afd80709
+               pkg/1.0
+-                pkg/1.0#d24b74828b7681f08d8f5ba0e7fd791e (timestamp)
++                pkg/1.0#d24b74828b7681f08d8f5ba0e7fd791e%timestamp (timestamp)
+                   pkg/1.0#d24b74828b7681f08d8f5ba0e7fd791e:c11e463c49652ba9c5adc62573ee49f966bd8417
+                     settings: Windows, x86
+             """)
+diff --git a/conans/test/integration/command_v2/test_cache_save_restore.py b/conans/test/integration/command_v2/test_cache_save_restore.py
+index 587eda7297c..e178cf240b2 100644
+--- a/conans/test/integration/command_v2/test_cache_save_restore.py
++++ b/conans/test/integration/command_v2/test_cache_save_restore.py
+@@ -155,3 +155,14 @@ def test_cache_save_restore_graph():
+     c2.run("list *:*#*")
+     assert "pkg/0.1" in c2.out
+     assert "dep/0.1" in c2.out
++
++
++def test_cache_save_subfolder():
++    """ It is possible to save package list in subfolder that doesn't exist
++    https://github.com/conan-io/conan/issues/15362
++    """
++    c = TestClient()
++    c.save({"conanfile.py": GenConanfile("dep", "0.1")})
++    c.run("export .")
++    c.run("cache save * --file=subfolder/cache.tgz")
++    assert os.path.exists(os.path.join(c.current_folder, "subfolder", "cache.tgz"))
+diff --git a/conans/test/integration/command_v2/test_graph_find_binaries.py b/conans/test/integration/command_v2/test_graph_find_binaries.py
+index 25812f4e459..5c92ee87a78 100644
+--- a/conans/test/integration/command_v2/test_graph_find_binaries.py
++++ b/conans/test/integration/command_v2/test_graph_find_binaries.py
+@@ -8,7 +8,7 @@
+ 
+ 
+ class TestFilterProfile:
+-    @pytest.fixture(scope="class")
++    @pytest.fixture()
+     def client(self):
+         c = TestClient()
+         c.save({"lib/conanfile.py": GenConanfile("lib", "1.0").with_settings("os", "build_type")
+@@ -18,11 +18,9 @@ def client(self):
+         c.run("create lib -s os=Windows -o *:shared=True")
+         return c
+ 
+-    def test_settings_exact_match_incomplete(self, client):
+-        # We find 2 exact matches for os=Windows
++    def test_exact_match(self, client):
+         c = client
+-        c.save({"windows": "[settings]\nos=Windows"})
+-        c.run("graph explain --requires=lib/1.0 -pr windows")
++        c.run("graph explain --requires=lib/1.0 --missing=lib/1.0 -s os=Windows")
+         expected = textwrap.dedent("""\
+             settings: Windows, Release
+             options: shared=False
+@@ -30,7 +28,7 @@ def test_settings_exact_match_incomplete(self, client):
+               explanation: This binary is an exact match for the defined inputs
+             """)
+         assert textwrap.indent(expected, "      ") in c.out
+-        c.run("graph explain --requires=lib/1.0 -pr windows --format=json")
++        c.run("graph explain --requires=lib/1.0 --missing=lib/1.0 -s os=Windows --format=json")
+         cache = json.loads(c.stdout)["closest_binaries"]
+         revisions = cache["lib/1.0"]["revisions"]
+         pkgs = revisions["5313a980ea0c56baeb582c510d6d9fbc"]["packages"]
+@@ -42,16 +40,18 @@ def test_settings_exact_match_incomplete(self, client):
+         assert pkg1["diff"]["dependencies"] == {}
+         assert pkg1["diff"]["explanation"] == "This binary is an exact match for the defined inputs"
+ 
+-    def test_settings_exact_match_complete(self, client):
+-        # We find 2 exact matches for os=Windows shared=True
++    def test_settings_incomplete(self, client):
+         c = client
+-        c.save({"windows": "[settings]\nos=Windows\n[options]\n*:shared=True"})
++        c.save({"windows": "[settings]\nos=Windows"})
+         c.run("graph explain --requires=lib/1.0 -pr windows")
+         expected = textwrap.dedent("""\
+             settings: Windows, Release
+-            options: shared=True
++            options: shared=False
+             diff
+-              explanation: This binary is an exact match for the defined inputs
++              settings
++                expected: build_type=None
++                existing: build_type=Release
++              explanation: This binary was built with different settings.
+             """)
+         assert textwrap.indent(expected, "      ") in c.out
+         c.run("graph explain --requires=lib/1.0 -pr windows --format=json")
+@@ -59,17 +59,33 @@ def test_settings_exact_match_complete(self, client):
+         revisions = cache["lib/1.0"]["revisions"]
+         pkgs = revisions["5313a980ea0c56baeb582c510d6d9fbc"]["packages"]
+         assert len(pkgs) == 1
+-        pkg1 = pkgs["c2dd2d51b5074bdb5b7d717929372de09830017b"]
++        pkg1 = pkgs["3d714b452400b3c3d6a964f42d5ec5004a6f22dc"]
+         assert pkg1["diff"]["platform"] == {}
+-        assert pkg1["diff"]["settings"] == {}
++        assert pkg1["diff"]["settings"] == {'existing': ['build_type=Release'],
++                                            'expected': ['build_type=None']}
+         assert pkg1["diff"]["options"] == {}
+         assert pkg1["diff"]["dependencies"] == {}
+-        assert pkg1["diff"]["explanation"] == "This binary is an exact match for the defined inputs"
++        assert pkg1["diff"]["explanation"] == "This binary was built with different settings."
++
++    def test_settings_with_option(self, client):
++        c = client
++        c.save({"windows": "[settings]\nos=Windows\n[options]\n*:shared=True"})
++        c.run("graph explain --requires=lib/1.0 -pr windows")
++        expected = textwrap.dedent("""\
++            settings: Windows, Release
++            options: shared=True
++            diff
++              settings
++                expected: build_type=None
++                existing: build_type=Release
++              explanation: This binary was built with different settings.
++            """)
++        assert textwrap.indent(expected, "      ") in c.out
+ 
+     def test_different_option(self, client):
+         # We find 1 closest match in Linux static
+         c = client
+-        c.save({"linux": "[settings]\nos=Linux\n[options]\n*:shared=True"})
++        c.save({"linux": "[settings]\nos=Linux\nbuild_type=Release\n[options]\n*:shared=True"})
+         c.run("graph explain --requires=lib/1.0 -pr linux")
+         expected = textwrap.dedent("""\
+             remote: Local Cache
+@@ -95,6 +111,36 @@ def test_different_option(self, client):
+         assert pkg1["diff"]["explanation"] == "This binary was built with the same settings, " \
+                                               "but different options"
+ 
++    def test_different_option_none(self):
++        # We find 1 closest match in Linux static
++        c = TestClient()
++        c.save({"conanfile.py": GenConanfile("lib", "1.0").with_option("opt", [None, 1])})
++        c.run("create .")
++        c.run("graph explain --requires=lib/1.0 -o *:opt=1")
++        expected = textwrap.dedent("""\
++            remote: Local Cache
++            diff
++              options
++                expected: opt=1
++                existing: opt=None
++              explanation: This binary was built with the same settings, but different options
++            """)
++        assert textwrap.indent(expected, "      ") in c.out
++
++        c.run("remove * -c")
++        c.run("create . -o *:opt=1")
++        c.run("graph explain --requires=lib/1.0")
++        expected = textwrap.dedent("""\
++            remote: Local Cache
++            options: opt=1
++            diff
++              options
++                expected: opt=None
++                existing: opt=1
++              explanation: This binary was built with the same settings, but different options
++            """)
++        assert textwrap.indent(expected, "      ") in c.out
++
+     def test_different_setting(self, client):
+         # We find 1 closest match in Linux static
+         c = client
+@@ -124,6 +170,44 @@ def test_different_setting(self, client):
+         assert pkg1["diff"]["dependencies"] == {}
+         assert pkg1["diff"]["explanation"] == "This binary was built with different settings."
+ 
++    def test_different_settings_target(self):
++        c = TestClient()
++        conanfile = textwrap.dedent("""\
++            from conan import ConanFile
++            class Pkg(ConanFile):
++                name = "tool"
++                version = "1.0"
++                def package_id(self):
++                    self.info.settings_target = self.settings_target.copy()
++                    self.info.settings_target.constrained(["os"])
++                """)
++        c.save({"conanfile.py": conanfile})
++        c.run("create . --build-require -s:b os=Windows -s:h os=Linux")
++
++        c.run("graph explain --tool-requires=tool/1.0 -s:b os=Windows -s:h os=Macos")
++        expected = textwrap.dedent("""\
++            remote: Local Cache
++            settings_target: os=Linux
++            diff
++              settings_target
++                expected: os=Macos
++                existing: os=Linux
++              explanation: This binary was built with different settings_target.
++            """)
++        assert textwrap.indent(expected, "      ") in c.out
++        c.run("graph explain --tool-requires=tool/1.0 -s:b os=Windows -s:h os=Macos --format=json")
++        cache = json.loads(c.stdout)["closest_binaries"]
++        revisions = cache["tool/1.0"]["revisions"]
++        pkgs = revisions["4cc4b286a46dc2ed188d8c417eadb4e6"]["packages"]
++        assert len(pkgs) == 1
++        pkg1 = pkgs["d66135125c07cc240b8d6adda090b76d60341205"]
++        assert pkg1["diff"]["platform"] == {}
++        assert pkg1["diff"]["settings_target"] == {'existing': ['os=Linux'],
++                                                   'expected': ['os=Macos']}
++        assert pkg1["diff"]["options"] == {}
++        assert pkg1["diff"]["dependencies"] == {}
++        assert pkg1["diff"]["explanation"] == "This binary was built with different settings_target."
++
+     def test_different_platform(self, client):
+         # We find closest match in other platforms
+         c = client
+@@ -153,9 +237,40 @@ def test_different_platform(self, client):
+         assert pkg1["diff"]["explanation"] == "This binary belongs to another OS or Architecture, " \
+                                               "highly incompatible."
+ 
++    def test_different_conf(self, client):
++        # We find closest match in other platforms
++        c = client
++        c.save_home({"global.conf": "tools.info.package_id:confs=['user.foo:bar']"})
++        c.run("graph explain --requires=lib/1.0 -c user.foo:bar=42 -s os=Linux")
++        expected = textwrap.dedent("""\
++            remote: Local Cache
++            settings: Linux, Release
++            options: shared=False
++            diff
++              confs
++                expected: user.foo:bar=42
++                existing: user.foo:bar=None
++              explanation: This binary has same settings, options and dependencies, but different confs
++            """)
++        assert textwrap.indent(expected, "      ") in c.out
++        c.run("graph explain --requires=lib/1.0 -c user.foo:bar=42 -s os=Linux -f=json")
++        cache = json.loads(c.stdout)["closest_binaries"]
++        revisions = cache["lib/1.0"]["revisions"]
++        pkgs = revisions["5313a980ea0c56baeb582c510d6d9fbc"]["packages"]
++        assert len(pkgs) == 1
++        pkg1 = pkgs["499989797d9192081b8f16f7d797b107a2edd8da"]
++        assert pkg1["diff"]["platform"] == {}
++        assert pkg1["diff"]["settings"] == {}
++        assert pkg1["diff"]["options"] == {}
++        assert pkg1["diff"]["dependencies"] == {}
++        assert pkg1["diff"]["confs"] == {"expected": ["user.foo:bar=42"],
++                                         "existing": ["user.foo:bar=None"]}
++        assert pkg1["diff"]["explanation"] == "This binary has same settings, options and " \
++                                              "dependencies, but different confs"
++
+ 
+ class TestMissingBinaryDeps:
+-    @pytest.fixture(scope="class")
++    @pytest.fixture()
+     def client(self):
+         c = TestClient()
+         c.save({"dep/conanfile.py": GenConanfile("dep").with_settings("os"),
+@@ -202,6 +317,125 @@ def test_other_dependencies(self, client):
+                """)
+         assert textwrap.indent(expected, "      ") in c.out
+ 
++    def test_different_python_requires(self):
++        c = TestClient(light=True)
++        c.save({"tool/conanfile.py": GenConanfile("tool"),
++                "lib/conanfile.py": GenConanfile("lib", "1.0").with_python_requires("tool/[>=1.0]")})
++        c.run("create tool --version=1.0")
++        c.run("create lib")
++        c.run("create tool --version=2.0")
++        c.run("graph explain --requires=lib/1.0")
++        expected = textwrap.dedent("""\
++            remote: Local Cache
++            python_requires: tool/1.0.Z
++            diff
++              python_requires
++                expected: tool/2.0.Z
++                existing: tool/1.0.Z
++              explanation: This binary has same settings, options and dependencies, but different python_requires
++            """)
++        assert textwrap.indent(expected, "      ") in c.out
++        c.run("graph explain --requires=lib/1.0 -s os=Linux --format=json")
++        cache = json.loads(c.stdout)["closest_binaries"]
++        revisions = cache["lib/1.0"]["revisions"]
++        pkgs = revisions["7bf17caa5bf9d2ed1dd8b337e9623fc0"]["packages"]
++        assert len(pkgs) == 1
++        pkg1 = pkgs["5ccdb706197ca94edc0ecee9ef0d0b11b887d937"]
++        assert pkg1["diff"]["platform"] == {}
++        assert pkg1["diff"]["settings"] == {}
++        assert pkg1["diff"]["options"] == {}
++        assert pkg1["diff"]["dependencies"] == {}
++        assert pkg1["diff"]["python_requires"] == {"expected": ["tool/2.0.Z"],
++                                                   "existing": ["tool/1.0.Z"]}
++        assert pkg1["diff"]["explanation"] == "This binary has same settings, options and " \
++                                              "dependencies, but different python_requires"
++
++    def test_build_requires(self):
++        c = TestClient(light=True)
++        c.save_home({"global.conf": "core.package_id:default_build_mode=minor_mode"})
++        c.save({"tool/conanfile.py": GenConanfile("tool"),
++                "lib/conanfile.py": GenConanfile("lib", "1.0").with_tool_requires("tool/[>=1.0]")})
++        c.run("create tool --version=1.0")
++        c.run("create lib")
++        c.run("create tool --version=2.0")
++        c.run("graph explain --requires=lib/1.0")
++        expected = textwrap.dedent("""\
++            remote: Local Cache
++            build_requires: tool/1.0.Z
++            diff
++              build_requires
++                expected: tool/2.0.Z
++                existing: tool/1.0.Z
++              explanation: This binary has same settings, options and dependencies, but different build_requires
++            """)
++        assert textwrap.indent(expected, "      ") in c.out
++        c.run("graph explain --requires=lib/1.0 -s os=Linux --format=json")
++        cache = json.loads(c.stdout)["closest_binaries"]
++        revisions = cache["lib/1.0"]["revisions"]
++        pkgs = revisions["4790f7f1561b52be5d39f0bc8e9acbed"]["packages"]
++        assert len(pkgs) == 1
++        pkg1 = pkgs["c9d96a611b8c819f35728d58d743f6a78a1b5942"]
++        assert pkg1["diff"]["platform"] == {}
++        assert pkg1["diff"]["settings"] == {}
++        assert pkg1["diff"]["options"] == {}
++        assert pkg1["diff"]["dependencies"] == {}
++        assert pkg1["diff"]["build_requires"] == {"expected": ["tool/2.0.Z"],
++                                                  "existing": ["tool/1.0.Z"]}
++        assert pkg1["diff"]["explanation"] == "This binary has same settings, options and " \
++                                              "dependencies, but different build_requires"
++
++
++def test_change_in_package_type():
++    tc = TestClient(light=True)
++    tc.save({
++        "libc/conanfile.py": GenConanfile("libc", "1.0"),
++        "libb/conanfile.py": GenConanfile("libb", "1.0")
++        .with_requires("libc/1.0"),
++        "liba/conanfile.py": GenConanfile("liba", "1.0")
++        .with_requires("libb/1.0")
++    })
++
++    tc.run("create libc")
++    tc.run("create libb")
++    tc.run("create liba")
++
++    tc.save({
++        "libc/conanfile.py": GenConanfile("libc", "1.0")
++        .with_package_type("application")
++    })
++    tc.run("create libc")
++
++    tc.run("create liba", assert_error=True)
++    assert "Missing binary: libb/1.0" in tc.out
++
++    tc.run("graph explain --requires=liba/1.0")
++    # This fails, graph explain thinks everything is ok
++    assert "explanation: This binary is an exact match for the defined inputs" not in tc.out
++
++
++def test_conf_difference_shown():
++    tc = TestClient(light=True)
++    tc.save({
++        "libc/conanfile.py": GenConanfile("libc", "1.0"),
++        "libb/conanfile.py": GenConanfile("libb", "1.0").with_requires("libc/1.0"),
++        "liba/conanfile.py": GenConanfile("liba", "1.0").with_requires("libb/1.0")
++    })
++    tc.save_home({"global.conf": "tools.info.package_id:confs=['user.foo:bar']"})
++
++    tc.run("create libc")
++    tc.run("create libb")
++    tc.run("create liba")
++
++    tc.run("remove libc/*:* -c")
++
++    tc.run("create libc -c user.foo:bar=42")
++
++    tc.run("create liba", assert_error=True)
++    assert "Missing prebuilt package for 'libc/1.0'" in tc.out
++
++    tc.run("graph explain --requires=liba/1.0")
++    assert "conf: user.foo:bar=42" in tc.out
++
+ 
+ class TestDistance:
+     def test_multiple_distance_ordering(self):
+diff --git a/conans/test/integration/toolchains/cmake/test_cmaketoolchain.py b/conans/test/integration/toolchains/cmake/test_cmaketoolchain.py
+index 46f88c732c0..604aaf01d75 100644
+--- a/conans/test/integration/toolchains/cmake/test_cmaketoolchain.py
++++ b/conans/test/integration/toolchains/cmake/test_cmaketoolchain.py
+@@ -1214,3 +1214,11 @@ def test_avoid_ovewrite_user_cmakepresets():
+     c.run('install . -g CMakeToolchain', assert_error=True)
+     assert "Error in generator 'CMakeToolchain': Existing CMakePresets.json not generated" in c.out
+     assert "Use --output-folder or define a 'layout' to avoid collision" in c.out
++
++
++def test_presets_njobs():
++    c = TestClient()
++    c.save({"conanfile.txt": ""})
++    c.run('install . -g CMakeToolchain -c tools.build:jobs=42')
++    presets = json.loads(c.load("CMakePresets.json"))
++    assert presets["buildPresets"][0]["jobs"] == 42
+diff --git a/conans/test/unittests/client/conf/detect/test_gcc_compiler.py b/conans/test/unittests/client/conf/detect/test_gcc_compiler.py
+index 39f3a6aa65b..e8874383270 100644
+--- a/conans/test/unittests/client/conf/detect/test_gcc_compiler.py
++++ b/conans/test/unittests/client/conf/detect/test_gcc_compiler.py
+@@ -13,6 +13,7 @@ class GCCCompilerTestCase(unittest.TestCase):
+     def test_detect_gcc_10(self, version):
+         with mock.patch("platform.system", return_value="Linux"):
+             with mock.patch("conan.internal.api.detect_api.detect_runner", return_value=(0, version)):
+-                compiler, installed_version = _gcc_compiler()
++                compiler, installed_version, compiler_exe = _gcc_compiler()
+         self.assertEqual(compiler, 'gcc')
+         self.assertEqual(installed_version, version)
++        self.assertEqual(compiler_exe, 'gcc')
+diff --git a/conans/test/unittests/model/settings_test.py b/conans/test/unittests/model/settings_test.py
+index b80904ff3f6..94d4a44673c 100644
+--- a/conans/test/unittests/model/settings_test.py
++++ b/conans/test/unittests/model/settings_test.py
+@@ -1,3 +1,4 @@
++import textwrap
+ import unittest
+ 
+ import pytest
+@@ -48,6 +49,32 @@ def test_none_any(self):
+         self.assertTrue(settings.os == "Windows")
+         self.assertEqual("os=Windows", settings.dumps())
+ 
++    def test_nested_any(self):
++        yml = textwrap.dedent("""\
++            os:
++                ANY:
++                    version: [null, ANY]
++                Ubuntu:
++                    version: ["18.04", "20.04"]
++            """)
++        settings = Settings.loads(yml)
++        settings.os = "Windows"
++        settings.validate()
++        self.assertTrue(settings.os == "Windows")
++        self.assertIn("os=Windows", settings.dumps())
++        settings.os.version = 2
++        self.assertTrue(settings.os == "Windows")
++        self.assertEqual("os=Windows\nos.version=2", settings.dumps())
++        settings.os = "Ubuntu"
++        with self.assertRaisesRegex(ConanException, "'settings.os.version' value not defined"):
++            settings.validate()
++        with self.assertRaisesRegex(ConanException,
++                                    "Invalid setting '3' is not a valid 'settings.os.version'"):
++            settings.os.version = 3
++        settings.os.version = "20.04"
++        self.assertEqual("os=Ubuntu\nos.version=20.04", settings.dumps())
++        self.assertTrue(settings.os.version == "20.04")
++
+     def test_getattr_none(self):
+         yml = "os: [None, Windows]"
+         settings = Settings.loads(yml)
+diff --git a/conans/test/unittests/tools/google/test_bazel.py b/conans/test/unittests/tools/google/test_bazel.py
+index a7d25d4047b..3fb80ca547e 100644
+--- a/conans/test/unittests/tools/google/test_bazel.py
++++ b/conans/test/unittests/tools/google/test_bazel.py
+@@ -21,6 +21,7 @@ def cpp_info():
+     save(ConanFileMock(), os.path.join(bindirs, "mylibwin2.dll"), "")
+     save(ConanFileMock(), os.path.join(bindirs, "myliblin.so"), "")
+     save(ConanFileMock(), os.path.join(bindirs, "mylibmac.dylib"), "")
++    save(ConanFileMock(), os.path.join(bindirs, "protoc"), "")  # binary
+     save(ConanFileMock(), os.path.join(libdirs, "myliblin.a"), "")
+     save(ConanFileMock(), os.path.join(libdirs, "mylibmac.a"), "")
+     save(ConanFileMock(), os.path.join(libdirs, "mylibwin.lib"), "")
+@@ -98,6 +99,10 @@ def test_bazeldeps_relativize_path(path, pattern, expected):
+     (["noexist"], False, []),
+     # no lib matching + Win + static
+     (["noexist", "mylibwin"], False, [('mylibwin', False, '{base_folder}/lib/mylibwin.lib', None)]),
++    # protobuf (Issue related https://github.com/conan-io/conan/issues/15390)
++    (["protoc"], True, []),
++    # non-conventional library name (Issue related https://github.com/conan-io/conan/pull/11343)
++    (["libmylib.so"], True, [('libmylib.so', True, '{base_folder}/lib/libmylib.so', None)]),
+ ])
+ def test_bazeldeps_get_libs(cpp_info, libs, is_shared, expected):
+     cpp_info.libs = libs
+diff --git a/conans/test/unittests/util/detect_test.py b/conans/test/unittests/util/detect_test.py
+index c9c03baf8e8..a9c1c9a2d4f 100644
+--- a/conans/test/unittests/util/detect_test.py
++++ b/conans/test/unittests/util/detect_test.py
+@@ -50,7 +50,7 @@ def test_detect_arch(self, machine, expected_arch):
+             self.assertEqual(expected_arch, result['arch'])
+ 
+     @mock.patch("conan.internal.api.detect_api._clang_compiler",
+-                return_value=("clang", Version("9")))
++                return_value=("clang", Version("9"), "clang"))
+     def test_detect_clang_gcc_toolchain(self, _):
+         output = RedirectedTestOutput()
+         with redirect_output(output):

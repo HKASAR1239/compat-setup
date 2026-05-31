@@ -1,0 +1,112 @@
+diff --git a/docs/patterns/http-requests.mdx b/docs/patterns/http-requests.mdx
+index dd39deabcb..ceb333e198 100644
+--- a/docs/patterns/http-requests.mdx
++++ b/docs/patterns/http-requests.mdx
+@@ -77,7 +77,7 @@ async def safe_header_info() -> dict:
+     }
+ ```
+ 
+-By default, `get_http_headers()` excludes problematic headers like `content-length`. To include all headers, use `get_http_headers(include_all=True)`.
++By default, `get_http_headers()` excludes problematic headers like `host` and `content-length`. To include all headers, use `get_http_headers(include_all=True)`.
+ 
+ ## Important Notes
+ 
+diff --git a/src/fastmcp/server/dependencies.py b/src/fastmcp/server/dependencies.py
+index 8448a283d8..7072114ccc 100644
+--- a/src/fastmcp/server/dependencies.py
++++ b/src/fastmcp/server/dependencies.py
+@@ -48,11 +48,24 @@ def get_http_headers(include_all: bool = False) -> dict[str, str]:
+     if include_all:
+         exclude_headers = set()
+     else:
+-        exclude_headers = {"content-length"}
+-
+-    # ensure all lowercase!
+-    # (just in case)
+-    exclude_headers = {h.lower() for h in exclude_headers}
++        exclude_headers = {
++            "host",
++            "content-length",
++            "connection",
++            "transfer-encoding",
++            "upgrade",
++            "te",
++            "keep-alive",
++            "expect",
++            # Proxy-related headers
++            "proxy-authenticate",
++            "proxy-authorization",
++            "proxy-connection",
++        }
++        # (just in case)
++        assert all(h.lower() == h for h in exclude_headers), (
++            "Excluded headers must be lowercase"
++        )
+ 
+     headers = {}
+ 
+diff --git a/tests/client/test_openapi.py b/tests/client/test_openapi.py
+index be2334cf7a..e9b704eceb 100644
+--- a/tests/client/test_openapi.py
++++ b/tests/client/test_openapi.py
+@@ -28,7 +28,8 @@ def post_headers(request: Request):
+         return request.headers
+ 
+     mcp = FastMCP.from_fastapi(
+-        app, httpx_client_kwargs={"headers": {"X-SERVER": "test-abc"}}
++        app,
++        httpx_client_kwargs={"headers": {"x-server-header": "test-abc"}},
+     )
+ 
+     return mcp
+@@ -169,16 +170,42 @@ async def test_client_headers_shttp_tool(self, shttp_server: str):
+             headers = json.loads(result[0].text)
+             assert headers["x-test"] == "test-123"
+ 
++    # async def test_certain_client_headers_are_stripped(self, shttp_server: str):
++    #     async with Client(
++    #         transport=StreamableHttpTransport(shttp_server, headers={"host": "1.2.3.4"})
++    #     ) as client:
++    #         result = await client.read_resource("resource://get_headers_headers_get")
++    #         assert isinstance(result[0], TextResourceContents)
++    #         headers = json.loads(result[0].text)
++    #         assert "host" not in headers
++
+     async def test_client_overrides_server_headers(self, shttp_server: str):
+         async with Client(
+             transport=StreamableHttpTransport(
+-                shttp_server, headers={"X-SERVER": "test-client"}
++                shttp_server, headers={"x-server-header": "test-client"}
++            )
++        ) as client:
++            result = await client.read_resource("resource://get_headers_headers_get")
++            assert isinstance(result[0], TextResourceContents)
++            headers = json.loads(result[0].text)
++            assert headers["x-server-header"] == "test-client"
++
++    async def test_client_with_excluded_header_is_ignored(self, sse_server: str):
++        async with Client(
++            transport=SSETransport(
++                sse_server,
++                headers={
++                    "x-server-header": "test-client",
++                    "host": "1.2.3.4",
++                    "not-host": "1.2.3.4",
++                },
+             )
+         ) as client:
+             result = await client.read_resource("resource://get_headers_headers_get")
+             assert isinstance(result[0], TextResourceContents)
+             headers = json.loads(result[0].text)
+-            assert headers["x-server"] == "test-client"
++            assert headers["not-host"] == "1.2.3.4"
++            assert headers["host"] == "fastapi"
+ 
+     async def test_client_headers_proxy(self, proxy_server: str):
+         """
+@@ -188,4 +215,4 @@ async def test_client_headers_proxy(self, proxy_server: str):
+             result = await client.read_resource("resource://get_headers_headers_get")
+             assert isinstance(result[0], TextResourceContents)
+             headers = json.loads(result[0].text)
+-            assert headers["x-server"] == "test-abc"
++            assert headers["x-server-header"] == "test-abc"

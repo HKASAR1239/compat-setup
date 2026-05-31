@@ -1,0 +1,13 @@
+diff --git a/beetsplug/lastgenre/__init__.py b/beetsplug/lastgenre/__init__.py
+index 85539109bd..ec27456f91 100644
+--- a/beetsplug/lastgenre/__init__.py
++++ b/beetsplug/lastgenre/__init__.py
+@@ -434,7 +434,7 @@ def _get_genre(
+             return fallback, "fallback"
+ 
+         # No fallback configured.
+-        return None, None
++        return None, "fallback unconfigured"
+ 
+     # Beets plugin hooks and CLI.
+ 

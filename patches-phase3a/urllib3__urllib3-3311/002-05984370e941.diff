@@ -1,0 +1,13 @@
+diff --git a/src/urllib3/http2.py b/src/urllib3/http2.py
+index 574fd2312a..9cf7720d04 100644
+--- a/src/urllib3/http2.py
++++ b/src/urllib3/http2.py
+@@ -193,7 +193,7 @@ def get_redirect_location(self) -> None:
+ 
+ 
+ def inject_into_urllib3() -> None:
+-    HTTPSConnectionPool.ConnectionCls = HTTP2Connection  # type: ignore[assignment]
++    HTTPSConnectionPool.ConnectionCls = HTTP2Connection
+     urllib3.connection.HTTPSConnection = HTTP2Connection  # type: ignore[misc]
+ 
+     # TODO: Offer 'http/1.1' as well, but for testing purposes this is handy.

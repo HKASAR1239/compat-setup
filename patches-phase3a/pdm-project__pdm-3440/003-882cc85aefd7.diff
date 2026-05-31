@@ -1,0 +1,7 @@
+diff --git a/news/3407.bugfix.md b/news/3407.bugfix.md
+new file mode 100644
+index 0000000000..9ada5b1871
+--- /dev/null
++++ b/news/3407.bugfix.md
+@@ -0,0 +1 @@
++Installation error for local plugins specified with file URL without a name.

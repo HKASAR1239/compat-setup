@@ -1,0 +1,7 @@
+diff --git a/news/3038.bugfix.md b/news/3038.bugfix.md
+new file mode 100644
+index 0000000000..7071bbe8f4
+--- /dev/null
++++ b/news/3038.bugfix.md
+@@ -0,0 +1 @@
++Ignore invalid requires-python values from index.

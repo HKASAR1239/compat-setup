@@ -1,0 +1,16 @@
+diff --git a/tests/test_provision.py b/tests/test_provision.py
+index b24b54798b..375e828a6f 100644
+--- a/tests/test_provision.py
++++ b/tests/test_provision.py
+@@ -231,8 +231,9 @@ def test_provision_conf_file(tox_project: ToxProjectCreator, tmp_path: Path, rel
+     result.assert_success()
+ 
+ 
+-def test_provision_default_arguments_exists(tox_project: ToxProjectCreator) -> None:
++@pytest.mark.parametrize("subcommand", ["r", "p", "de", "l", "d", "c", "q", "e", "le"])
++def test_provision_default_arguments_exists(tox_project: ToxProjectCreator, subcommand: str) -> None:
+     ini = "[tox]\nrequires = tox<4"
+-    outcome = tox_project({"tox.ini": ini}).run()
++    outcome = tox_project({"tox.ini": ini}).run(subcommand)
+     for argument in ["result_json", "hash_seed", "discover", "list_dependencies"]:
+         assert hasattr(outcome.state.conf.options, argument)

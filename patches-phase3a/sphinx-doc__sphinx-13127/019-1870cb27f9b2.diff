@@ -1,0 +1,1591 @@
+diff --git a/.ruff.toml b/.ruff.toml
+index be9ac015a33..5efb7d35ac6 100644
+--- a/.ruff.toml
++++ b/.ruff.toml
+@@ -222,7 +222,7 @@ select = [
+     # ruff-specific rules ('RUF')
+ #    "RUF001",  # String contains ambiguous {}. Did you mean {}?
+     "RUF002",  # Docstring contains ambiguous {}. Did you mean {}?
+-#    "RUF003",  # Comment contains ambiguous {}. Did you mean {}?
++    "RUF003",  # Comment contains ambiguous {}. Did you mean {}?
+     "RUF005",  # Consider `{expression}` instead of concatenation
+     "RUF006",  # Store a reference to the return value of `{expr}.{method}`
+     "RUF007",  # Prefer `itertools.pairwise()` over `zip()` when iterating over successive pairs
+@@ -231,7 +231,7 @@ select = [
+     "RUF010",  # Use explicit conversion flag
+ #    "RUF012",  # Mutable class attributes should be annotated with `typing.ClassVar`
+     "RUF013",  # PEP 484 prohibits implicit `Optional`
+-#    "RUF015",  # Prefer `next({iterable})` over single element slice
++    "RUF015",  # Prefer `next({iterable})` over single element slice
+     "RUF016",  # Slice in indexed access to type `{value_type}` uses type `{index_type}` instead of an integer
+     "RUF017",  # Avoid quadratic list summation
+     "RUF018",  # Avoid assignment expressions in `assert` statements
+@@ -243,13 +243,21 @@ select = [
+     "RUF024",  # Do not pass mutable objects as values to `dict.fromkeys`
+     "RUF026",  # `default_factory` is a positional-only argument to `defaultdict`
+ #    "RUF027",  # Possible f-string without an `f` prefix
+-#    "RUF028",  # This suppression comment is invalid because {}
+-#    "RUF029",  # Function `{name}` is declared `async`, but doesn't `await` or use `async` features.
+-    "RUF030",  # `print()` expression in `assert` statement is likely unintentional
+-#    "RUF031",  # Use parentheses for tuples in subscripts.
++    "RUF028",  # This suppression comment is invalid because {}
++    "RUF029",  # Function `{name}` is declared `async`, but doesn't `await` or use `async` features.
++    "RUF030",  # `print()` call in `assert` statement is likely unintentional
++    "RUF031",  # Use parentheses for tuples in subscripts
+     "RUF032",  # `Decimal()` called with float literal argument
+     "RUF033",  # `__post_init__` method with argument defaults
+-    "RUF034",  # Useless if-else condition
++    "RUF034",  # Useless `if`-`else` condition
++    "RUF035",  # Unsafe use of `{name}` detected
++    "RUF036",  # `None` not at the end of the type annotation.
++    "RUF038",  # `Literal[True, False, ...]` can be replaced with `Literal[...] | bool`
++#    "RUF039",  # First argument to {call} is not raw string
++    "RUF040",  # Non-string literal used as assert message
++    "RUF041",  # Unnecessary nested `Literal`
++#    "RUF048",  # `__version__` may contain non-integral-like elements
++    "RUF055",  # Plain string pattern passed to `re` function
+ #    "RUF100",  # Unused `noqa` directive
+     "RUF101",  # `{original}` is a redirect to `{target}`
+     "RUF200",  # Failed to parse pyproject.toml: {message}
+@@ -359,7 +367,7 @@ select = [
+ ]
+ 
+ # these tests need old ``typing`` generic aliases
+-"tests/test_util/test_util_typing.py" = ["UP006", "UP007", "UP035"]
++"tests/test_util/test_util_typing.py" = ["RUF036", "UP006", "UP007", "UP035"]
+ "tests/test_util/typing_test_data.py" = ["FA100", "I002", "PYI030", "UP006", "UP007", "UP035"]
+ 
+ "utils/*" = [
+diff --git a/CHANGES.rst b/CHANGES.rst
+index 9ad42567414..8c284c55c8e 100644
+--- a/CHANGES.rst
++++ b/CHANGES.rst
+@@ -23,6 +23,9 @@ Bugs fixed
+ 
+ * #13060: HTML Search: use ``Map`` to store per-file term scores.
+   Patch by James Addison
++* #13130: LaTeX docs: ``pdflatex`` index creation may fail for index entries
++  in French.  See :confval:`latex_use_xindy`.
++  Patch by Jean-François B.
+ * LaTeX: fix a ``7.4.0`` typo in a default for ``\sphinxboxsetup``
+   (refs: PR #13152).
+   Patch by Jean-François B.
+diff --git a/doc/usage/configuration.rst b/doc/usage/configuration.rst
+index bb8eb9c5853..953b2f0b0ab 100644
+--- a/doc/usage/configuration.rst
++++ b/doc/usage/configuration.rst
+@@ -3157,6 +3157,9 @@ These options influence LaTeX output.
+    * The default is :code-py:`False` for :code-py:`'pdflatex'`,
+      but :code-py:`True` is recommended for non-English documents as soon
+      as some indexed terms use non-ASCII characters from the language script.
++     Attempting to index a term whose first character is non-ASCII
++     will break the build, if :confval:`latex_use_xindy` is left to its
++     default :code-py:`False`.
+ 
+    Sphinx adds some dedicated support to the :program:`xindy` base distribution
+    for using :code-py:`'pdflatex'` engine with Cyrillic scripts.
+diff --git a/pyproject.toml b/pyproject.toml
+index f479619fee4..8186e321362 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -82,12 +82,12 @@ docs = [
+ ]
+ lint = [
+     "flake8>=6.0",
+-    "ruff==0.8.0",
++    "ruff==0.8.1",
+     "mypy==1.13.0",
+     "sphinx-lint>=0.9",
+     "types-colorama==0.4.15.20240311",
+     "types-defusedxml==0.7.0.20240218",
+-    "types-docutils==0.21.0.20241005",
++    "types-docutils==0.21.0.20241128",
+     "types-Pillow==10.2.0.20240822",
+     "types-Pygments==2.18.0.20240506",
+     "types-requests==2.32.0.20241016",  # align with requests
+diff --git a/sphinx/application.py b/sphinx/application.py
+index 5edc86afb71..0c10575abef 100644
+--- a/sphinx/application.py
++++ b/sphinx/application.py
+@@ -26,7 +26,7 @@
+ from sphinx.project import Project
+ from sphinx.registry import SphinxComponentRegistry
+ from sphinx.util import docutils, logging
+-from sphinx.util._pathlib import _StrPath
++from sphinx.util._pathlib import _StrPath, _StrPathProperty
+ from sphinx.util.build_phase import BuildPhase
+ from sphinx.util.console import bold
+ from sphinx.util.display import progress_message
+@@ -140,6 +140,11 @@ class Sphinx:
+     warningiserror: Final = False
+     _warncount: int
+ 
++    srcdir = _StrPathProperty()
++    confdir = _StrPathProperty()
++    outdir = _StrPathProperty()
++    doctreedir = _StrPathProperty()
++
+     def __init__(self, srcdir: str | os.PathLike[str], confdir: str | os.PathLike[str] | None,
+                  outdir: str | os.PathLike[str], doctreedir: str | os.PathLike[str],
+                  buildername: str, confoverrides: dict | None = None,
+diff --git a/sphinx/builders/__init__.py b/sphinx/builders/__init__.py
+index 620ff82abe5..7c9b9cb172c 100644
+--- a/sphinx/builders/__init__.py
++++ b/sphinx/builders/__init__.py
+@@ -23,6 +23,7 @@
+     rst,
+ )
+ from sphinx.util._importer import import_object
++from sphinx.util._pathlib import _StrPathProperty
+ from sphinx.util.build_phase import BuildPhase
+ from sphinx.util.console import bold
+ from sphinx.util.display import progress_message, status_iterator
+@@ -48,7 +49,6 @@
+     from sphinx.application import Sphinx
+     from sphinx.config import Config
+     from sphinx.events import EventManager
+-    from sphinx.util._pathlib import _StrPath
+     from sphinx.util.tags import Tags
+ 
+ 
+@@ -94,11 +94,16 @@ class Builder:
+     #: The file format produced by the builder allows images to be embedded using data-URIs.
+     supported_data_uri_images: bool = False
+ 
++    srcdir = _StrPathProperty()
++    confdir = _StrPathProperty()
++    outdir = _StrPathProperty()
++    doctreedir = _StrPathProperty()
++
+     def __init__(self, app: Sphinx, env: BuildEnvironment) -> None:
+-        self.srcdir: _StrPath = app.srcdir
+-        self.confdir: _StrPath = app.confdir
+-        self.outdir: _StrPath = app.outdir
+-        self.doctreedir: _StrPath = app.doctreedir
++        self.srcdir = app.srcdir
++        self.confdir = app.confdir
++        self.outdir = app.outdir
++        self.doctreedir = app.doctreedir
+         ensuredir(self.doctreedir)
+ 
+         self.app: Sphinx = app
+diff --git a/sphinx/builders/latex/transforms.py b/sphinx/builders/latex/transforms.py
+index 57864208e17..df478533770 100644
+--- a/sphinx/builders/latex/transforms.py
++++ b/sphinx/builders/latex/transforms.py
+@@ -151,7 +151,7 @@ def renumber_footnotes(self) -> None:
+                     break
+ 
+             # assign new footnote number
+-            old_label = cast(nodes.label, footnote[0])
++            old_label = cast('nodes.label', footnote[0])
+             old_label.replace_self(nodes.label('', str(num)))
+             if old_label in footnote['names']:
+                 footnote['names'].remove(old_label.astext())
+@@ -455,7 +455,7 @@ def visit_footnote_reference(self, node: nodes.footnote_reference) -> None:
+         number = node.astext().strip()
+         docname = node['docname']
+         if (docname, number) in self.appeared:
+-            footnote = self.appeared[(docname, number)]
++            footnote = self.appeared[docname, number]
+             footnote['referred'] = True
+ 
+             mark = footnotemark('', number, refid=node['refid'])
+@@ -471,7 +471,7 @@ def visit_footnote_reference(self, node: nodes.footnote_reference) -> None:
+                 node.replace_self(footnote)
+                 footnote.walkabout(self)
+ 
+-            self.appeared[(docname, number)] = footnote
++            self.appeared[docname, number] = footnote
+         raise nodes.SkipNode
+ 
+     def get_footnote_by_reference(
+diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
+index a1efb33d59d..cdd5ae0c296 100644
+--- a/sphinx/builders/linkcheck.py
++++ b/sphinx/builders/linkcheck.py
+@@ -251,7 +251,7 @@ def _add_uri(self, uri: str, node: nodes.Element) -> None:
+         :param uri: URI to add
+         :param node: A node class where the URI was found
+         """
+-        builder = cast(CheckExternalLinksBuilder, self.app.builder)
++        builder = cast('CheckExternalLinksBuilder', self.app.builder)
+         hyperlinks = builder.hyperlinks
+         docname = self.env.docname
+ 
+diff --git a/sphinx/directives/__init__.py b/sphinx/directives/__init__.py
+index d92678ab8f2..de0dc45beec 100644
+--- a/sphinx/directives/__init__.py
++++ b/sphinx/directives/__init__.py
+@@ -81,7 +81,7 @@ def get_field_type_map(self) -> dict[str, tuple[Field, bool]]:
+                     self._doc_field_type_map[name] = (field, False)
+ 
+                 if field.is_typed:
+-                    typed_field = cast(TypedField, field)
++                    typed_field = cast('TypedField', field)
+                     for name in typed_field.typenames:
+                         self._doc_field_type_map[name] = (field, True)
+ 
+@@ -346,7 +346,7 @@ def run(self) -> list[Node]:
+             )
+             messages += [error]
+ 
+-        return cast(list[nodes.Node], messages)
++        return cast('list[nodes.Node]', messages)
+ 
+ 
+ class DefaultDomain(SphinxDirective):
+diff --git a/sphinx/directives/other.py b/sphinx/directives/other.py
+index 32fd3111a65..10fe8ff69f9 100644
+--- a/sphinx/directives/other.py
++++ b/sphinx/directives/other.py
+@@ -376,7 +376,7 @@ def run(self) -> list[Node]:
+             # Use these depths to determine where the nested sections should
+             # be placed in the doctree.
+             n_sects_to_raise = current_depth - nested_depth + 1
+-            parent = cast(nodes.Element, self.state.parent)
++            parent = cast('nodes.Element', self.state.parent)
+             for _i in range(n_sects_to_raise):
+                 if parent.parent:
+                     parent = parent.parent
+diff --git a/sphinx/directives/patches.py b/sphinx/directives/patches.py
+index ff2989520d8..37144abacdd 100644
+--- a/sphinx/directives/patches.py
++++ b/sphinx/directives/patches.py
+@@ -38,7 +38,7 @@ def run(self) -> list[Node]:
+             return result
+ 
+         assert len(result) == 1
+-        figure_node = cast(nodes.figure, result[0])
++        figure_node = cast('nodes.figure', result[0])
+         if name:
+             # set ``name`` to figure_node if given
+             self.options['name'] = name
+@@ -46,7 +46,7 @@ def run(self) -> list[Node]:
+ 
+         # copy lineno from image node
+         if figure_node.line is None and len(figure_node) == 2:
+-            caption = cast(nodes.caption, figure_node[1])
++            caption = cast('nodes.caption', figure_node[1])
+             figure_node.line = caption.line
+ 
+         return [figure_node]
+@@ -163,7 +163,7 @@ def run(self) -> list[Node]:
+         return ret
+ 
+     def add_target(self, ret: list[Node]) -> None:
+-        node = cast(nodes.math_block, ret[0])
++        node = cast('nodes.math_block', ret[0])
+ 
+         # assign label automatically if math_number_all enabled
+         if node['label'] == '' or (self.config.math_number_all and not node['label']):  # NoQA: PLC1901
+diff --git a/sphinx/domains/c/_ast.py b/sphinx/domains/c/_ast.py
+index 09f7388253e..14b89c4773c 100644
+--- a/sphinx/domains/c/_ast.py
++++ b/sphinx/domains/c/_ast.py
+@@ -1793,14 +1793,14 @@ def clone(self) -> ASTDeclaration:
+ 
+     @property
+     def name(self) -> ASTNestedName:
+-        decl = cast(DeclarationType, self.declaration)
++        decl = cast('DeclarationType', self.declaration)
+         return decl.name
+ 
+     @property
+     def function_params(self) -> list[ASTFunctionParameter] | None:
+         if self.objectType != 'function':
+             return None
+-        decl = cast(ASTType, self.declaration)
++        decl = cast('ASTType', self.declaration)
+         return decl.function_params
+ 
+     def get_id(self, version: int, prefixed: bool = True) -> str:
+@@ -1851,7 +1851,7 @@ def describe_signature(self, signode: TextElement, mode: str,
+             mainDeclNode += addnodes.desc_sig_keyword('enumerator', 'enumerator')
+             mainDeclNode += addnodes.desc_sig_space()
+         elif self.objectType == 'type':
+-            decl = cast(ASTType, self.declaration)
++            decl = cast('ASTType', self.declaration)
+             prefix = decl.get_type_declaration_prefix()
+             mainDeclNode += addnodes.desc_sig_keyword(prefix, prefix)
+             mainDeclNode += addnodes.desc_sig_space()
+diff --git a/sphinx/domains/citation.py b/sphinx/domains/citation.py
+index 0bac6040c46..2f70131f3da 100644
+--- a/sphinx/domains/citation.py
++++ b/sphinx/domains/citation.py
+@@ -117,7 +117,7 @@ def apply(self, **kwargs: Any) -> None:
+             domain.note_citation(node)
+ 
+             # mark citation labels as not smartquoted
+-            label = cast(nodes.label, node[0])
++            label = cast('nodes.label', node[0])
+             label['support_smartquotes'] = False
+ 
+ 
+diff --git a/sphinx/domains/python/__init__.py b/sphinx/domains/python/__init__.py
+index 24dfc2a5756..27e4de4ebb8 100644
+--- a/sphinx/domains/python/__init__.py
++++ b/sphinx/domains/python/__init__.py
+@@ -542,10 +542,10 @@ def filter_meta_fields(app: Sphinx, domain: str, objtype: str, content: Element)
+ 
+     for node in content:
+         if isinstance(node, nodes.field_list):
+-            fields = cast(list[nodes.field], node)
++            fields = cast('list[nodes.field]', node)
+             # removing list items while iterating the list needs reversed()
+             for field in reversed(fields):
+-                field_name = cast(nodes.field_body, field[0]).astext().strip()
++                field_name = cast('nodes.field_body', field[0]).astext().strip()
+                 if field_name == 'meta' or field_name.startswith('meta '):
+                     node.remove(field)
+ 
+diff --git a/sphinx/domains/std/__init__.py b/sphinx/domains/std/__init__.py
+index 0e214c92a5b..490077f8609 100644
+--- a/sphinx/domains/std/__init__.py
++++ b/sphinx/domains/std/__init__.py
+@@ -7,7 +7,6 @@
+ from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
+ 
+ from docutils import nodes
+-from docutils.nodes import Element, Node, system_message
+ from docutils.parsers.rst import Directive, directives
+ from docutils.statemachine import StringList
+ 
+@@ -25,6 +24,8 @@
+ if TYPE_CHECKING:
+     from collections.abc import Callable, Iterable, Iterator, Set
+ 
++    from docutils.nodes import Element, Node, system_message
++
+     from sphinx.application import Sphinx
+     from sphinx.builders import Builder
+     from sphinx.environment import BuildEnvironment
+@@ -813,7 +814,7 @@ def process_doc(
+                                location=node)
+             self.anonlabels[name] = docname, labelid
+             if node.tagname == 'section':
+-                title = cast(nodes.title, node[0])
++                title = cast('nodes.title', node[0])
+                 sectname = clean_astext(title)
+             elif node.tagname == 'rubric':
+                 sectname = clean_astext(node)
+@@ -824,9 +825,9 @@ def process_doc(
+             else:
+                 if (isinstance(node, nodes.definition_list | nodes.field_list) and
+                         node.children):
+-                    node = cast(nodes.Element, node.children[0])
++                    node = cast('nodes.Element', node.children[0])
+                 if isinstance(node, nodes.field | nodes.definition_list_item):
+-                    node = cast(nodes.Element, node.children[0])
++                    node = cast('nodes.Element', node.children[0])
+                 if isinstance(node, nodes.term | nodes.field_name):
+                     sectname = clean_astext(node)
+                 else:
+@@ -1117,7 +1118,7 @@ def is_enumerable_node(self, node: Node) -> bool:
+     def get_numfig_title(self, node: Node) -> str | None:
+         """Get the title of enumerable nodes to refer them using its title"""
+         if self.is_enumerable_node(node):
+-            elem = cast(Element, node)
++            elem = cast('Element', node)
+             _, title_getter = self.enumerable_nodes.get(elem.__class__, (None, None))
+             if title_getter:
+                 return title_getter(elem)
+diff --git a/sphinx/environment/__init__.py b/sphinx/environment/__init__.py
+index b17c1ee453b..e73ecd7a511 100644
+--- a/sphinx/environment/__init__.py
++++ b/sphinx/environment/__init__.py
+@@ -22,6 +22,7 @@
+ from sphinx.transforms import SphinxTransformer
+ from sphinx.util import logging
+ from sphinx.util._files import DownloadFiles, FilenameUniqDict
++from sphinx.util._pathlib import _StrPathProperty
+ from sphinx.util._serialise import stable_str
+ from sphinx.util._timestamps import _format_rfc3339_microseconds
+ from sphinx.util.docutils import LoggingReporter
+@@ -98,10 +99,13 @@ class BuildEnvironment:
+ 
+     # --------- ENVIRONMENT INITIALIZATION -------------------------------------
+ 
++    srcdir = _StrPathProperty()
++    doctreedir = _StrPathProperty()
++
+     def __init__(self, app: Sphinx) -> None:
+         self.app: Sphinx = app
+-        self.doctreedir: _StrPath = app.doctreedir
+-        self.srcdir: _StrPath = app.srcdir
++        self.doctreedir = app.doctreedir
++        self.srcdir = app.srcdir
+         self.config: Config = None  # type: ignore[assignment]
+         self.config_status: int = CONFIG_UNSET
+         self.config_status_extra: str = ''
+diff --git a/sphinx/environment/collectors/metadata.py b/sphinx/environment/collectors/metadata.py
+index aadc6af1613..6352adcc2ca 100644
+--- a/sphinx/environment/collectors/metadata.py
++++ b/sphinx/environment/collectors/metadata.py
+@@ -43,12 +43,12 @@ def process_doc(self, app: Sphinx, doctree: nodes.document) -> None:
+             for node in doctree[index]:  # type: ignore[attr-defined]
+                 # nodes are multiply inherited...
+                 if isinstance(node, nodes.authors):
+-                    authors = cast(list[nodes.author], node)
++                    authors = cast('list[nodes.author]', node)
+                     md['authors'] = [author.astext() for author in authors]
+                 elif isinstance(node, nodes.field):
+                     assert len(node) == 2
+-                    field_name = cast(nodes.field_name, node[0])
+-                    field_body = cast(nodes.field_body, node[1])
++                    field_name = cast('nodes.field_name', node[0])
++                    field_body = cast('nodes.field_body', node[1])
+                     md[field_name.astext()] = field_body.astext()
+                 elif isinstance(node, nodes.TextElement):
+                     # other children must be TextElement
+diff --git a/sphinx/environment/collectors/toctree.py b/sphinx/environment/collectors/toctree.py
+index 1de7b2473eb..6067a3856f5 100644
+--- a/sphinx/environment/collectors/toctree.py
++++ b/sphinx/environment/collectors/toctree.py
+@@ -232,7 +232,7 @@ def _walk_toc(
+                     if 'skip_section_number' in subnode:
+                         continue
+                     numstack[-1] += 1
+-                    reference = cast(nodes.reference, subnode[0])
++                    reference = cast('nodes.reference', subnode[0])
+                     if depth > 0:
+                         number = numstack.copy()
+                         secnums[reference['anchorname']] = tuple(numstack)
+diff --git a/sphinx/ext/autodoc/type_comment.py b/sphinx/ext/autodoc/type_comment.py
+index e0a5a63b91d..afdf890489e 100644
+--- a/sphinx/ext/autodoc/type_comment.py
++++ b/sphinx/ext/autodoc/type_comment.py
+@@ -94,11 +94,11 @@ def get_type_comment(obj: Any, bound_method: bool = False) -> Signature | None:
+             # this adds if-block before the declaration.
+             module = ast.parse('if True:\n' + source, type_comments=True)
+             subject = cast(
+-                ast.FunctionDef, module.body[0].body[0],  # type: ignore[attr-defined]
++                'ast.FunctionDef', module.body[0].body[0],  # type: ignore[attr-defined]
+             )
+         else:
+             module = ast.parse(source, type_comments=True)
+-            subject = cast(ast.FunctionDef, module.body[0])
++            subject = cast('ast.FunctionDef', module.body[0])
+ 
+         type_comment = getattr(subject, "type_comment", None)
+         if type_comment:
+diff --git a/sphinx/ext/autodoc/typehints.py b/sphinx/ext/autodoc/typehints.py
+index a2b05aac705..1a53d483408 100644
+--- a/sphinx/ext/autodoc/typehints.py
++++ b/sphinx/ext/autodoc/typehints.py
+@@ -3,7 +3,6 @@
+ from __future__ import annotations
+ 
+ import re
+-from collections.abc import Iterable
+ from typing import TYPE_CHECKING, Any, cast
+ 
+ from docutils import nodes
+@@ -14,6 +13,8 @@
+ from sphinx.util.typing import ExtensionMetadata, stringify_annotation
+ 
+ if TYPE_CHECKING:
++    from collections.abc import Iterable
++
+     from docutils.nodes import Element
+ 
+     from sphinx.application import Sphinx
+@@ -49,7 +50,7 @@ def merge_typehints(app: Sphinx, domain: str, objtype: str, contentnode: Element
+         return
+ 
+     try:
+-        signature = cast(addnodes.desc_signature, contentnode.parent[0])
++        signature = cast('addnodes.desc_signature', contentnode.parent[0])
+         if signature['module']:
+             fullname = f'{signature["module"]}.{signature["fullname"]}'
+         else:
+@@ -97,7 +98,7 @@ def insert_field_list(node: Element) -> nodes.field_list:
+ def modify_field_list(node: nodes.field_list, annotations: dict[str, str],
+                       suppress_rtype: bool = False) -> None:
+     arguments: dict[str, dict[str, bool]] = {}
+-    fields = cast(Iterable[nodes.field], node)
++    fields = cast('Iterable[nodes.field]', node)
+     for field in fields:
+         field_name = field[0].astext()
+         parts = re.split(' +', field_name)
+@@ -159,7 +160,7 @@ def augment_descriptions_with_types(
+     annotations: dict[str, str],
+     force_rtype: bool,
+ ) -> None:
+-    fields = cast(Iterable[nodes.field], node)
++    fields = cast('Iterable[nodes.field]', node)
+     has_description: set[str] = set()
+     has_type: set[str] = set()
+     for field in fields:
+diff --git a/sphinx/ext/autosectionlabel.py b/sphinx/ext/autosectionlabel.py
+index 63885e7039f..f3bee10e44f 100644
+--- a/sphinx/ext/autosectionlabel.py
++++ b/sphinx/ext/autosectionlabel.py
+@@ -37,7 +37,7 @@ def register_sections_as_label(app: Sphinx, document: Node) -> None:
+             continue
+         labelid = node['ids'][0]
+         docname = app.env.docname
+-        title = cast(nodes.title, node[0])
++        title = cast('nodes.title', node[0])
+         ref_name = getattr(title, 'rawsource', title.astext())
+         if app.config.autosectionlabel_prefix_document:
+             name = nodes.fully_normalize_name(docname + ':' + ref_name)
+diff --git a/sphinx/ext/autosummary/__init__.py b/sphinx/ext/autosummary/__init__.py
+index e77dbe91c79..ffae20af0ee 100644
+--- a/sphinx/ext/autosummary/__init__.py
++++ b/sphinx/ext/autosummary/__init__.py
+@@ -57,6 +57,7 @@
+ import re
+ import sys
+ from inspect import Parameter
++from pathlib import Path
+ from types import ModuleType
+ from typing import TYPE_CHECKING, Any, ClassVar, cast
+ 
+@@ -133,13 +134,13 @@ class autosummary_table(nodes.comment):
+ def autosummary_table_visit_html(self: HTML5Translator, node: autosummary_table) -> None:
+     """Make the first column of the table non-breaking."""
+     try:
+-        table = cast(nodes.table, node[0])
+-        tgroup = cast(nodes.tgroup, table[0])
+-        tbody = cast(nodes.tbody, tgroup[-1])
+-        rows = cast(list[nodes.row], tbody)
++        table = cast('nodes.table', node[0])
++        tgroup = cast('nodes.tgroup', table[0])
++        tbody = cast('nodes.tbody', tgroup[-1])
++        rows = cast('list[nodes.row]', tbody)
+         for row in rows:
+-            col1_entry = cast(nodes.entry, row[0])
+-            par = cast(nodes.paragraph, col1_entry[0])
++            col1_entry = cast('nodes.entry', row[0])
++            par = cast('nodes.paragraph', col1_entry[0])
+             for j, subnode in enumerate(list(par)):
+                 if isinstance(subnode, nodes.Text):
+                     new_text = subnode.astext().replace(" ", "\u00a0")
+@@ -154,10 +155,10 @@ class FakeApplication:
+     verbosity = 0
+ 
+     def __init__(self) -> None:
+-        self.doctreedir = None
++        self.doctreedir = Path()
+         self.events = None
+         self.extensions: dict[str, Extension] = {}
+-        self.srcdir = None
++        self.srcdir = Path()
+         self.config = Config()
+         self.project = Project('', {})
+         self.registry = SphinxComponentRegistry()
+@@ -764,7 +765,7 @@ def run(self) -> tuple[list[Node], list[system_message]]:
+             return objects, errors
+ 
+         assert len(objects) == 1
+-        pending_xref = cast(addnodes.pending_xref, objects[0])
++        pending_xref = cast('addnodes.pending_xref', objects[0])
+         try:
+             # try to import object by name
+             prefixes = get_import_prefixes_from_env(self.env)
+@@ -777,7 +778,7 @@ def run(self) -> tuple[list[Node], list[system_message]]:
+             ]
+             import_by_name(name, prefixes)
+         except ImportExceptionGroup:
+-            literal = cast(nodes.literal, pending_xref[0])
++            literal = cast('nodes.literal', pending_xref[0])
+             objects[0] = nodes.emphasis(self.rawtext, literal.astext(),
+                                         classes=literal['classes'])
+ 
+diff --git a/sphinx/ext/autosummary/generate.py b/sphinx/ext/autosummary/generate.py
+index 1d90438cfec..f2ce63ed406 100644
+--- a/sphinx/ext/autosummary/generate.py
++++ b/sphinx/ext/autosummary/generate.py
+@@ -46,6 +46,7 @@
+ from sphinx.pycode import ModuleAnalyzer
+ from sphinx.registry import SphinxComponentRegistry
+ from sphinx.util import logging, rst
++from sphinx.util._pathlib import _StrPath
+ from sphinx.util.inspect import getall, safe_getattr
+ from sphinx.util.osutil import ensuredir
+ from sphinx.util.template import SphinxTemplateLoader
+@@ -67,7 +68,7 @@ def __init__(self, translator: NullTranslations) -> None:
+         self.config = Config()
+         self.registry = SphinxComponentRegistry()
+         self.messagelog: list[str] = []
+-        self.srcdir = '/'
++        self.srcdir = _StrPath('/')
+         self.translator = translator
+         self.verbosity = 0
+         self._warncount = 0
+diff --git a/sphinx/ext/inheritance_diagram.py b/sphinx/ext/inheritance_diagram.py
+index 47dec78aa9f..1bdbc2513ab 100644
+--- a/sphinx/ext/inheritance_diagram.py
++++ b/sphinx/ext/inheritance_diagram.py
+@@ -35,7 +35,6 @@ class E(B): pass
+ import inspect
+ import os.path
+ import re
+-from collections.abc import Iterable, Sequence
+ from importlib import import_module
+ from typing import TYPE_CHECKING, Any, ClassVar, cast
+ 
+@@ -54,6 +53,8 @@ class E(B): pass
+ from sphinx.util.docutils import SphinxDirective
+ 
+ if TYPE_CHECKING:
++    from collections.abc import Iterable, Sequence
++
+     from docutils.nodes import Node
+ 
+     from sphinx.application import Sphinx
+@@ -424,7 +425,7 @@ def html_visit_inheritance_diagram(self: HTML5Translator, node: inheritance_diag
+     graphviz_output_format = self.builder.env.config.graphviz_output_format.upper()
+     current_filename = os.path.basename(self.builder.current_docname + self.builder.out_suffix)
+     urls = {}
+-    pending_xrefs = cast(Iterable[addnodes.pending_xref], node)
++    pending_xrefs = cast('Iterable[addnodes.pending_xref]', node)
+     for child in pending_xrefs:
+         if child.get('refuri') is not None:
+             # Construct the name from the URI if the reference is external via intersphinx
+diff --git a/sphinx/ext/intersphinx/_resolve.py b/sphinx/ext/intersphinx/_resolve.py
+index 0dbab63dc69..94101588bfa 100644
+--- a/sphinx/ext/intersphinx/_resolve.py
++++ b/sphinx/ext/intersphinx/_resolve.py
+@@ -569,7 +569,7 @@ def run(self, **kwargs: Any) -> None:
+         for node in self.document.findall(pending_xref):
+             if 'intersphinx' not in node:
+                 continue
+-            contnode = cast(nodes.TextElement, node[0].deepcopy())
++            contnode = cast('nodes.TextElement', node[0].deepcopy())
+             inv_name = node['inventory']
+             if inv_name is not None:
+                 assert inventory_exists(self.env, inv_name)
+diff --git a/sphinx/ext/mathjax.py b/sphinx/ext/mathjax.py
+index ba8cd03e945..e9357fee604 100644
+--- a/sphinx/ext/mathjax.py
++++ b/sphinx/ext/mathjax.py
+@@ -13,13 +13,13 @@
+ from docutils import nodes
+ 
+ import sphinx
+-from sphinx.builders.html import StandaloneHTMLBuilder
+ from sphinx.errors import ExtensionError
+ from sphinx.locale import _
+ from sphinx.util.math import get_node_equation_number
+ 
+ if TYPE_CHECKING:
+     from sphinx.application import Sphinx
++    from sphinx.builders.html import StandaloneHTMLBuilder
+     from sphinx.util.typing import ExtensionMetadata
+     from sphinx.writers.html5 import HTML5Translator
+ 
+@@ -82,7 +82,7 @@ def install_mathjax(app: Sphinx, pagename: str, templatename: str, context: dict
+         raise ExtensionError(msg)
+ 
+     domain = app.env.domains.math_domain
+-    builder = cast(StandaloneHTMLBuilder, app.builder)
++    builder = cast('StandaloneHTMLBuilder', app.builder)
+     if app.registry.html_assets_policy == 'always' or domain.has_equations(pagename):
+         # Enable mathjax only if equations exists
+         if app.config.mathjax2_config:
+diff --git a/sphinx/ext/todo.py b/sphinx/ext/todo.py
+index 0625621b6db..cec0599b4aa 100644
+--- a/sphinx/ext/todo.py
++++ b/sphinx/ext/todo.py
+@@ -214,7 +214,7 @@ def latex_visit_todo_node(self: LaTeXTranslator, node: todo_node) -> None:
+         self.body.append('\n\\begin{sphinxtodo}{')
+         self.body.append(self.hypertarget_to(node))
+ 
+-        title_node = cast(nodes.title, node[0])
++        title_node = cast('nodes.title', node[0])
+         title = texescape.escape(title_node.astext(), self.config.latex_engine)
+         self.body.append('%s:}' % title)
+         self.no_latex_floats += 1
+diff --git a/sphinx/ext/viewcode.py b/sphinx/ext/viewcode.py
+index da1713aa6fa..afc4b06f5cc 100644
+--- a/sphinx/ext/viewcode.py
++++ b/sphinx/ext/viewcode.py
+@@ -14,7 +14,6 @@
+ 
+ import sphinx
+ from sphinx import addnodes
+-from sphinx.builders.html import StandaloneHTMLBuilder
+ from sphinx.locale import _, __
+ from sphinx.pycode import ModuleAnalyzer
+ from sphinx.transforms.post_transforms import SphinxPostTransform
+@@ -28,6 +27,7 @@
+ 
+     from sphinx.application import Sphinx
+     from sphinx.builders import Builder
++    from sphinx.builders.html import StandaloneHTMLBuilder
+     from sphinx.environment import BuildEnvironment
+     from sphinx.util._pathlib import _StrPath
+     from sphinx.util.typing import ExtensionMetadata
+@@ -228,7 +228,7 @@ def should_generate_module_page(app: Sphinx, modname: str) -> bool:
+         # Always (re-)generate module page when module filename is not found.
+         return True
+ 
+-    builder = cast(StandaloneHTMLBuilder, app.builder)
++    builder = cast('StandaloneHTMLBuilder', app.builder)
+     basename = modname.replace('.', '/') + builder.out_suffix
+     page_filename = os.path.join(app.outdir, '_modules/', basename)
+ 
+diff --git a/sphinx/pycode/parser.py b/sphinx/pycode/parser.py
+index 26ecb913a50..7c59b158e48 100644
+--- a/sphinx/pycode/parser.py
++++ b/sphinx/pycode/parser.py
+@@ -283,13 +283,13 @@ def add_variable_comment(self, name: str, comment: str) -> None:
+         qualname = self.get_qualname_for(name)
+         if qualname:
+             basename = '.'.join(qualname[:-1])
+-            self.comments[(basename, name)] = comment
++            self.comments[basename, name] = comment
+ 
+     def add_variable_annotation(self, name: str, annotation: ast.AST) -> None:
+         qualname = self.get_qualname_for(name)
+         if qualname:
+             basename = '.'.join(qualname[:-1])
+-            self.annotations[(basename, name)] = ast_unparse(annotation)
++            self.annotations[basename, name] = ast_unparse(annotation)
+ 
+     def is_final(self, decorators: list[ast.expr]) -> bool:
+         final = []
+diff --git a/sphinx/transforms/__init__.py b/sphinx/transforms/__init__.py
+index ca3a533fab0..a1c9f28c720 100644
+--- a/sphinx/transforms/__init__.py
++++ b/sphinx/transforms/__init__.py
+@@ -443,11 +443,11 @@ class GlossarySorter(SphinxTransform):
+     def apply(self, **kwargs: Any) -> None:
+         for glossary in self.document.findall(addnodes.glossary):
+             if glossary['sorted']:
+-                definition_list = cast(nodes.definition_list, glossary[0])
++                definition_list = cast('nodes.definition_list', glossary[0])
+                 definition_list[:] = sorted(
+                     definition_list,
+                     key=lambda item: unicodedata.normalize(
+-                        'NFD', cast(nodes.term, item)[0].astext().lower()
++                        'NFD', cast('nodes.term', item)[0].astext().lower()
+                     ),
+                 )
+ 
+diff --git a/sphinx/transforms/compact_bullet_list.py b/sphinx/transforms/compact_bullet_list.py
+index f144df87fb2..ffc67007bec 100644
+--- a/sphinx/transforms/compact_bullet_list.py
++++ b/sphinx/transforms/compact_bullet_list.py
+@@ -75,8 +75,8 @@ def check_refonly_list(node: Node) -> bool:
+         for node in self.document.findall(nodes.bullet_list):
+             if check_refonly_list(node):
+                 for item in node.findall(nodes.list_item):
+-                    para = cast(nodes.paragraph, item[0])
+-                    ref = cast(nodes.reference, para[0])
++                    para = cast('nodes.paragraph', item[0])
++                    ref = cast('nodes.reference', para[0])
+                     compact_para = addnodes.compact_paragraph()
+                     compact_para += ref
+                     item.replace(para, compact_para)
+diff --git a/sphinx/transforms/post_transforms/__init__.py b/sphinx/transforms/post_transforms/__init__.py
+index cb590b77a10..de880c9c27f 100644
+--- a/sphinx/transforms/post_transforms/__init__.py
++++ b/sphinx/transforms/post_transforms/__init__.py
+@@ -7,7 +7,6 @@
+ from typing import TYPE_CHECKING, Any, cast
+ 
+ from docutils import nodes
+-from docutils.nodes import Element, Node
+ 
+ from sphinx import addnodes
+ from sphinx.errors import NoUri
+@@ -20,6 +19,8 @@
+ if TYPE_CHECKING:
+     from collections.abc import Sequence
+ 
++    from docutils.nodes import Element, Node
++
+     from sphinx.addnodes import pending_xref
+     from sphinx.application import Sphinx
+     from sphinx.domains import Domain
+@@ -68,9 +69,9 @@ def run(self, **kwargs: Any) -> None:
+         for node in self.document.findall(addnodes.pending_xref):
+             content = self.find_pending_xref_condition(node, ('resolved', '*'))
+             if content:
+-                contnode = cast(Element, content[0].deepcopy())
++                contnode = cast('Element', content[0].deepcopy())
+             else:
+-                contnode = cast(Element, node[0].deepcopy())
++                contnode = cast('Element', node[0].deepcopy())
+ 
+             newnode = None
+ 
+diff --git a/sphinx/util/_pathlib.py b/sphinx/util/_pathlib.py
+index 31b47ce5a67..1f3209cef48 100644
+--- a/sphinx/util/_pathlib.py
++++ b/sphinx/util/_pathlib.py
+@@ -17,7 +17,7 @@
+ import sys
+ import warnings
+ from pathlib import Path, PosixPath, PurePath, WindowsPath
+-from typing import Any
++from typing import Any, overload
+ 
+ from sphinx.deprecation import RemovedInSphinx90Warning
+ 
+@@ -133,3 +133,38 @@ def __getitem__(self, item: int | slice) -> str:
+         def __len__(self) -> int:
+             warnings.warn(_MSG, RemovedInSphinx90Warning, stacklevel=2)
+             return len(self.__str__())
++
++
++class _StrPathProperty:
++    def __init__(self) -> None:
++        self.instance_attr: str = ''
++
++    def __set_name__(self, owner: object, name: str) -> None:
++        self.instance_attr = f'_{name}'  # i.e. '_srcdir'
++
++    @overload
++    def __get__(self, obj: None, objtype: None) -> _StrPathProperty: ...  # NoQA: E704
++
++    @overload
++    def __get__(self, obj: object, objtype: type[object]) -> _StrPath: ...  # NoQA: E704
++
++    def __get__(
++        self, obj: object | None, objtype: type[object] | None = None
++    ) -> _StrPathProperty | _StrPath:
++        if obj is None:
++            return self
++        if not self.instance_attr:
++            raise AttributeError
++        return getattr(obj, self.instance_attr)
++
++    def __set__(self, obj: Any, value: _StrPath | Path) -> None:
++        try:
++            setattr(obj, self.instance_attr, _StrPath(value))
++        except TypeError as err:
++            cls_name = type(obj).__qualname__
++            name = self.instance_attr.removeprefix('_')
++            msg = f'{cls_name}.{name} may only be set to path-like objects'
++            raise TypeError(msg) from err
++
++    def __delete__(self, obj: Any) -> None:
++        delattr(obj, self.instance_attr)
+diff --git a/sphinx/util/docfields.py b/sphinx/util/docfields.py
+index 33fda6f5dcd..1bfcd7451e4 100644
+--- a/sphinx/util/docfields.py
++++ b/sphinx/util/docfields.py
+@@ -10,7 +10,6 @@
+ from typing import TYPE_CHECKING, Any, cast
+ 
+ from docutils import nodes
+-from docutils.nodes import Element, Node
+ 
+ from sphinx import addnodes
+ from sphinx.locale import __
+@@ -18,6 +17,7 @@
+ from sphinx.util.nodes import get_node_line
+ 
+ if TYPE_CHECKING:
++    from docutils.nodes import Element, Node
+     from docutils.parsers.rst.states import Inliner
+ 
+     from sphinx.directives import ObjectDescription
+@@ -237,7 +237,7 @@ def make_field(
+             listnode += nodes.list_item('', par)
+ 
+         if len(items) == 1 and self.can_collapse:
+-            list_item = cast(nodes.list_item, listnode[0])
++            list_item = cast('nodes.list_item', listnode[0])
+             fieldbody = nodes.field_body('', list_item[0])
+             return nodes.field('', fieldname, fieldbody)
+ 
+@@ -366,10 +366,10 @@ def transform(self, node: nodes.field_list) -> None:
+         types: dict[str, dict] = {}
+ 
+         # step 1: traverse all fields and collect field types and content
+-        for field in cast(list[nodes.field], node):
++        for field in cast('list[nodes.field]', node):
+             assert len(field) == 2
+-            field_name = cast(nodes.field_name, field[0])
+-            field_body = cast(nodes.field_body, field[1])
++            field_name = cast('nodes.field_name', field[0])
++            field_body = cast('nodes.field_body', field[1])
+             try:
+                 # split into field type and argument
+                 fieldtype_name, fieldarg = field_name.astext().split(None, 1)
+@@ -380,7 +380,7 @@ def transform(self, node: nodes.field_list) -> None:
+ 
+             # collect the content, trying not to keep unnecessary paragraphs
+             if _is_single_paragraph(field_body):
+-                paragraph = cast(nodes.paragraph, field_body[0])
++                paragraph = cast('nodes.paragraph', field_body[0])
+                 content = paragraph.children
+             else:
+                 content = field_body.children
+@@ -403,7 +403,7 @@ def transform(self, node: nodes.field_list) -> None:
+                     and len(content) == 1
+                     and isinstance(content[0], nodes.Text)
+                 ):
+-                    typed_field = cast(TypedField, typedesc)
++                    typed_field = cast('TypedField', typedesc)
+                     target = content[0].astext()
+                     xrefs = typed_field.make_xrefs(
+                         typed_field.typerolename,
+@@ -413,7 +413,7 @@ def transform(self, node: nodes.field_list) -> None:
+                         env=self.directive.state.document.settings.env,
+                     )
+                     if _is_single_paragraph(field_body):
+-                        paragraph = cast(nodes.paragraph, field_body[0])
++                        paragraph = cast('nodes.paragraph', field_body[0])
+                         paragraph.clear()
+                         paragraph.extend(xrefs)
+                     else:
+@@ -456,7 +456,7 @@ def transform(self, node: nodes.field_list) -> None:
+             if typedesc.is_grouped:
+                 if typename in groupindices:
+                     group = cast(
+-                        tuple[Field, list, Node], entries[groupindices[typename]]
++                        'tuple[Field, list, Node]', entries[groupindices[typename]]
+                     )
+                 else:
+                     groupindices[typename] = len(entries)
+diff --git a/sphinx/util/docutils.py b/sphinx/util/docutils.py
+index f8fa00f4316..ed8ebdb3544 100644
+--- a/sphinx/util/docutils.py
++++ b/sphinx/util/docutils.py
+@@ -355,7 +355,7 @@ def __init__(
+         debug: bool = False,
+         error_handler: str = 'backslashreplace',
+     ) -> None:
+-        stream = cast(IO, WarningStream())
++        stream = cast('IO', WarningStream())
+         super().__init__(
+             source, report_level, halt_level, stream, debug, error_handler=error_handler
+         )
+diff --git a/sphinx/util/i18n.py b/sphinx/util/i18n.py
+index 826696c83e3..48425a03385 100644
+--- a/sphinx/util/i18n.py
++++ b/sphinx/util/i18n.py
+@@ -167,11 +167,11 @@ def docname_to_domain(docname: str, compaction: bool | str) -> str:
+ 
+ # date_format mappings: ustrftime() to babel.dates.format_datetime()
+ date_format_mappings = {
+-    '%a':  'EEE',     # Weekday as locale’s abbreviated name.
+-    '%A':  'EEEE',    # Weekday as locale’s full name.
+-    '%b':  'MMM',     # Month as locale’s abbreviated name.
+-    '%B':  'MMMM',    # Month as locale’s full name.
+-    '%c':  'medium',  # Locale’s appropriate date and time representation.
++    '%a':  'EEE',     # Weekday as locale's abbreviated name.
++    '%A':  'EEEE',    # Weekday as locale's full name.
++    '%b':  'MMM',     # Month as locale's abbreviated name.
++    '%B':  'MMMM',    # Month as locale's full name.
++    '%c':  'medium',  # Locale's appropriate date and time representation.
+     '%-d': 'd',       # Day of the month as a decimal number.
+     '%d':  'dd',      # Day of the month as a zero-padded decimal number.
+     '%-H': 'H',       # Hour (24-hour clock) as a decimal number [0,23].
+@@ -184,7 +184,7 @@ def docname_to_domain(docname: str, compaction: bool | str) -> str:
+     '%m':  'MM',      # Month as a zero-padded decimal number.
+     '%-M': 'm',       # Minute as a decimal number [0,59].
+     '%M':  'mm',      # Minute as a zero-padded decimal number [00,59].
+-    '%p':  'a',       # Locale’s equivalent of either AM or PM.
++    '%p':  'a',       # Locale's equivalent of either AM or PM.
+     '%-S': 's',       # Second as a decimal number.
+     '%S':  'ss',      # Second as a zero-padded decimal number.
+     '%U':  'WW',      # Week number of the year (Sunday as the first day of the week)
+@@ -196,8 +196,8 @@ def docname_to_domain(docname: str, compaction: bool | str) -> str:
+                       # Monday are considered to be in week 0.
+     '%W':  'WW',      # Week number of the year (Monday as the first day of the week)
+                       # as a zero-padded decimal number.
+-    '%x':  'medium',  # Locale’s appropriate date representation.
+-    '%X':  'medium',  # Locale’s appropriate time representation.
++    '%x':  'medium',  # Locale's appropriate date representation.
++    '%X':  'medium',  # Locale's appropriate time representation.
+     '%y':  'YY',      # Year without century as a zero-padded decimal number.
+     '%Y':  'yyyy',    # Year with century as a decimal number.
+     '%Z':  'zzz',     # Time zone name (no characters if no time zone exists).
+diff --git a/sphinx/util/inspect.py b/sphinx/util/inspect.py
+index b25d5f06aeb..e2bc8b1e6a7 100644
+--- a/sphinx/util/inspect.py
++++ b/sphinx/util/inspect.py
+@@ -848,7 +848,7 @@ def signature_from_str(signature: str) -> Signature:
+     """Create a :class:`~inspect.Signature` object from a string."""
+     code = 'def func' + signature + ': pass'
+     module = ast.parse(code)
+-    function = typing.cast(ast.FunctionDef, module.body[0])
++    function = typing.cast('ast.FunctionDef', module.body[0])
+ 
+     return signature_from_ast(function, code)
+ 
+diff --git a/sphinx/util/logging.py b/sphinx/util/logging.py
+index 20293c8fabe..b40f49259b5 100644
+--- a/sphinx/util/logging.py
++++ b/sphinx/util/logging.py
+@@ -161,9 +161,9 @@ def warning(  # type: ignore[override]
+         self,
+         msg: object,
+         *args: object,
+-        type: None | str = None,
+-        subtype: None | str = None,
+-        location: None | str | tuple[str | None, int | None] | Node = None,
++        type: str | None = None,
++        subtype: str | None = None,
++        location: str | tuple[str | None, int | None] | Node | None = None,
+         nonl: bool = True,
+         color: str | None = None,
+         once: bool = False,
+diff --git a/sphinx/util/nodes.py b/sphinx/util/nodes.py
+index 7f06ae194fc..19c21986d98 100644
+--- a/sphinx/util/nodes.py
++++ b/sphinx/util/nodes.py
+@@ -95,7 +95,7 @@ def findall(self, node: Node) -> Iterator[N]:
+         confounds type checkers' ability to determine the return type of the iterator.
+         """
+         for found in node.findall(self):
+-            yield cast(N, found)
++            yield cast('N', found)
+ 
+ 
+ def get_full_module_name(node: Node) -> str:
+diff --git a/sphinx/util/rst.py b/sphinx/util/rst.py
+index 85915ef894b..412edc31b25 100644
+--- a/sphinx/util/rst.py
++++ b/sphinx/util/rst.py
+@@ -105,7 +105,7 @@ def append_epilog(content: StringList, epilog: str) -> None:
+         if len(content) > 0:
+             source, lineno = content.info(-1)
+             # lineno will never be None, since len(content) > 0
+-            lineno = cast(int, lineno)
++            lineno = cast('int', lineno)
+         else:
+             source = '<generated>'
+             lineno = 0
+diff --git a/sphinx/writers/html.py b/sphinx/writers/html.py
+index 4b193345da0..e9640dc2925 100644
+--- a/sphinx/writers/html.py
++++ b/sphinx/writers/html.py
+@@ -31,7 +31,7 @@ def __init__(self, builder: StandaloneHTMLBuilder) -> None:
+     def translate(self) -> None:
+         # sadly, this is mostly copied from parent class
+         visitor = self.builder.create_translator(self.document, self.builder)
+-        self.visitor = cast(HTML5Translator, visitor)
++        self.visitor = cast('HTML5Translator', visitor)
+         self.document.walkabout(visitor)
+         self.output = self.visitor.astext()
+         for attr in (
+diff --git a/sphinx/writers/html5.py b/sphinx/writers/html5.py
+index 608a84f34db..d5c77fee8fe 100644
+--- a/sphinx/writers/html5.py
++++ b/sphinx/writers/html5.py
+@@ -5,7 +5,6 @@
+ import posixpath
+ import re
+ import urllib.parse
+-from collections.abc import Iterable
+ from typing import TYPE_CHECKING, cast
+ 
+ from docutils import nodes
+@@ -18,6 +17,8 @@
+ from sphinx.util.images import get_image_size
+ 
+ if TYPE_CHECKING:
++    from collections.abc import Iterable
++
+     from docutils.nodes import Element, Node, Text
+ 
+     from sphinx.builders import Builder
+@@ -670,7 +671,7 @@ def depart_literal(self, node: Element) -> None:
+ 
+     def visit_productionlist(self, node: Element) -> None:
+         self.body.append(self.starttag(node, 'pre'))
+-        productionlist = cast(Iterable[addnodes.production], node)
++        productionlist = cast('Iterable[addnodes.production]', node)
+         names = (production['tokenname'] for production in productionlist)
+         maxlen = max(len(name) for name in names)
+         lastname = None
+diff --git a/sphinx/writers/latex.py b/sphinx/writers/latex.py
+index 454543b043c..cb07c0bf615 100644
+--- a/sphinx/writers/latex.py
++++ b/sphinx/writers/latex.py
+@@ -8,7 +8,6 @@
+ 
+ import re
+ from collections import defaultdict
+-from collections.abc import Iterable
+ from pathlib import Path
+ from typing import TYPE_CHECKING, Any, ClassVar, cast
+ 
+@@ -26,6 +25,8 @@
+ from sphinx.util.texescape import tex_replace_map
+ 
+ if TYPE_CHECKING:
++    from collections.abc import Iterable
++
+     from docutils.nodes import Element, Node, Text
+ 
+     from sphinx.builders.latex import LaTeXBuilder
+@@ -95,7 +96,7 @@ def translate(self) -> None:
+             self.document, self.builder, self.theme
+         )
+         self.document.walkabout(visitor)
+-        self.output = cast(LaTeXTranslator, visitor).astext()
++        self.output = cast('LaTeXTranslator', visitor).astext()
+ 
+ 
+ # Helper classes
+@@ -214,8 +215,8 @@ def add_cell(self, height: int, width: int) -> None:
+         self.cell_id += 1
+         for col in range(width):
+             for row in range(height):
+-                assert self.cells[(self.row + row, self.col + col)] == 0
+-                self.cells[(self.row + row, self.col + col)] = self.cell_id
++                assert self.cells[self.row + row, self.col + col] == 0
++                self.cells[self.row + row, self.col + col] = self.cell_id
+ 
+     def cell(
+         self,
+@@ -241,25 +242,25 @@ class TableCell:
+     """Data of a cell in a table."""
+ 
+     def __init__(self, table: Table, row: int, col: int) -> None:
+-        if table.cells[(row, col)] == 0:
++        if table.cells[row, col] == 0:
+             raise IndexError
+ 
+         self.table = table
+-        self.cell_id = table.cells[(row, col)]
++        self.cell_id = table.cells[row, col]
+         self.row = row
+         self.col = col
+ 
+         # adjust position for multirow/multicol cell
+-        while table.cells[(self.row - 1, self.col)] == self.cell_id:
++        while table.cells[self.row - 1, self.col] == self.cell_id:
+             self.row -= 1
+-        while table.cells[(self.row, self.col - 1)] == self.cell_id:
++        while table.cells[self.row, self.col - 1] == self.cell_id:
+             self.col -= 1
+ 
+     @property
+     def width(self) -> int:
+         """Returns the cell width."""
+         width = 0
+-        while self.table.cells[(self.row, self.col + width)] == self.cell_id:
++        while self.table.cells[self.row, self.col + width] == self.cell_id:
+             width += 1
+         return width
+ 
+@@ -267,7 +268,7 @@ def width(self) -> int:
+     def height(self) -> int:
+         """Returns the cell height."""
+         height = 0
+-        while self.table.cells[(self.row + height, self.col)] == self.cell_id:
++        while self.table.cells[self.row + height, self.col] == self.cell_id:
+             height += 1
+         return height
+ 
+@@ -1111,7 +1112,7 @@ def depart_rubric(self, node: nodes.rubric) -> None:
+ 
+     def visit_footnote(self, node: Element) -> None:
+         self.in_footnote += 1
+-        label = cast(nodes.label, node[0])
++        label = cast('nodes.label', node[0])
+         if self.in_parsed_literal:
+             self.body.append(r'\begin{footnote}[%s]' % label.astext())
+         else:
+@@ -1382,8 +1383,8 @@ def depart_entry(self, node: Element) -> None:
+     def visit_acks(self, node: Element) -> None:
+         # this is a list in the source, but should be rendered as a
+         # comma-separated list here
+-        bullet_list = cast(nodes.bullet_list, node[0])
+-        list_items = cast(Iterable[nodes.list_item], bullet_list)
++        bullet_list = cast('nodes.bullet_list', node[0])
++        list_items = cast('Iterable[nodes.list_item]', bullet_list)
+         self.body.append(BLANKLINE)
+         self.body.append(', '.join(n.astext() for n in list_items) + '.')
+         self.body.append(BLANKLINE)
+@@ -2091,8 +2092,8 @@ def depart_title_reference(self, node: Element) -> None:
+         self.body.append('}')
+ 
+     def visit_thebibliography(self, node: Element) -> None:
+-        citations = cast(Iterable[nodes.citation], node)
+-        labels = (cast(nodes.label, citation[0]) for citation in citations)
++        citations = cast('Iterable[nodes.citation]', node)
++        labels = (cast('nodes.label', citation[0]) for citation in citations)
+         longest_label = max((label.astext() for label in labels), key=len)
+         if len(longest_label) > MAX_CITATION_LABEL_LENGTH:
+             # adjust max width of citation labels not to break the layout
+@@ -2106,7 +2107,7 @@ def depart_thebibliography(self, node: Element) -> None:
+         self.body.append(r'\end{sphinxthebibliography}' + CR)
+ 
+     def visit_citation(self, node: Element) -> None:
+-        label = cast(nodes.label, node[0])
++        label = cast('nodes.label', node[0])
+         self.body.append(
+             rf'\bibitem[{self.encode(label.astext())}]'
+             rf'{{{node["docname"]}:{node["ids"][0]}}}'
+@@ -2159,7 +2160,7 @@ def depart_footnotemark(self, node: Element) -> None:
+         self.body.append(']')
+ 
+     def visit_footnotetext(self, node: Element) -> None:
+-        label = cast(nodes.label, node[0])
++        label = cast('nodes.label', node[0])
+         self.body.append('%' + CR)
+         self.body.append(r'\begin{footnotetext}[%s]' % label.astext())
+         self.body.append(r'\sphinxAtStartFootnote' + CR)
+diff --git a/sphinx/writers/manpage.py b/sphinx/writers/manpage.py
+index 7b7db13961f..0f5a37572e8 100644
+--- a/sphinx/writers/manpage.py
++++ b/sphinx/writers/manpage.py
+@@ -2,7 +2,6 @@
+ 
+ from __future__ import annotations
+ 
+-from collections.abc import Iterable
+ from typing import TYPE_CHECKING, Any, cast
+ 
+ from docutils import nodes
+@@ -17,6 +16,8 @@
+ from sphinx.util.nodes import NodeMatcher
+ 
+ if TYPE_CHECKING:
++    from collections.abc import Iterable
++
+     from docutils.nodes import Element
+ 
+     from sphinx.builders import Builder
+@@ -33,7 +34,7 @@ def translate(self) -> None:
+         transform = NestedInlineTransform(self.document)
+         transform.apply()
+         visitor = self.builder.create_translator(self.document, self.builder)
+-        self.visitor = cast(ManualPageTranslator, visitor)
++        self.visitor = cast('ManualPageTranslator', visitor)
+         self.document.walkabout(visitor)
+         self.output = self.visitor.astext()
+ 
+@@ -277,7 +278,7 @@ def visit_productionlist(self, node: Element) -> None:
+         self.ensure_eol()
+         self.in_productionlist += 1
+         self.body.append('.sp\n.nf\n')
+-        productionlist = cast(Iterable[addnodes.production], node)
++        productionlist = cast('Iterable[addnodes.production]', node)
+         names = (production['tokenname'] for production in productionlist)
+         maxlen = max(len(name) for name in names)
+         lastname = None
+@@ -379,11 +380,11 @@ def depart_glossary(self, node: Element) -> None:
+         pass
+ 
+     def visit_acks(self, node: Element) -> None:
+-        bullet_list = cast(nodes.bullet_list, node[0])
+-        list_items = cast(Iterable[nodes.list_item], bullet_list)
++        bullet_list = cast('nodes.bullet_list', node[0])
++        list_items = cast('Iterable[nodes.list_item]', bullet_list)
+         self.ensure_eol()
+-        bullet_list = cast(nodes.bullet_list, node[0])
+-        list_items = cast(Iterable[nodes.list_item], bullet_list)
++        bullet_list = cast('nodes.bullet_list', node[0])
++        list_items = cast('Iterable[nodes.list_item]', bullet_list)
+         self.body.append(', '.join(n.astext() for n in list_items) + '.')
+         self.body.append('\n')
+         raise nodes.SkipNode
+diff --git a/sphinx/writers/texinfo.py b/sphinx/writers/texinfo.py
+index 396e48bf91a..bae5714425e 100644
+--- a/sphinx/writers/texinfo.py
++++ b/sphinx/writers/texinfo.py
+@@ -5,7 +5,6 @@
+ import os.path
+ import re
+ import textwrap
+-from collections.abc import Iterable, Iterator
+ from typing import TYPE_CHECKING, Any, ClassVar, cast
+ 
+ from docutils import nodes, writers
+@@ -19,6 +18,8 @@
+ from sphinx.writers.latex import collected_footnote
+ 
+ if TYPE_CHECKING:
++    from collections.abc import Iterable, Iterator
++
+     from docutils.nodes import Element, Node, Text
+ 
+     from sphinx.builders.texinfo import TexinfoBuilder
+@@ -133,7 +134,7 @@ def __init__(self, builder: TexinfoBuilder) -> None:
+     def translate(self) -> None:
+         assert isinstance(self.document, nodes.document)
+         visitor = self.builder.create_translator(self.document, self.builder)
+-        self.visitor = cast(TexinfoTranslator, visitor)
++        self.visitor = cast('TexinfoTranslator', visitor)
+         self.document.walkabout(visitor)
+         self.visitor.finish()
+         for attr in self.visitor_attributes:
+@@ -288,7 +289,7 @@ def add_node_name(name: str) -> str:
+         ]
+         # each section is also a node
+         for section in self.document.findall(nodes.section):
+-            title = cast(nodes.TextElement, section.next_node(nodes.Titular))  # type: ignore[type-var]
++            title = cast('nodes.TextElement', section.next_node(nodes.Titular))  # type: ignore[type-var]
+             name = title.astext() if title else '<untitled>'
+             section['node_name'] = add_node_name(name)
+ 
+@@ -530,7 +531,7 @@ def footnotes_under(n: Element) -> Iterator[nodes.footnote]:
+ 
+         fnotes: dict[str, list[collected_footnote | bool]] = {}
+         for fn in footnotes_under(node):
+-            label = cast(nodes.label, fn[0])
++            label = cast('nodes.label', fn[0])
+             num = label.astext().strip()
+             fnotes[num] = [collected_footnote('', *fn.children), False]
+         return fnotes
+@@ -609,7 +610,7 @@ def visit_section(self, node: Element) -> None:
+             self.add_anchor(id, node)
+ 
+         self.next_section_ids.clear()
+-        self.previous_section = cast(nodes.section, node)
++        self.previous_section = cast('nodes.section', node)
+         self.section_level += 1
+ 
+     def depart_section(self, node: Element) -> None:
+@@ -1110,7 +1111,7 @@ def depart_field_body(self, node: Element) -> None:
+ 
+     def visit_admonition(self, node: Element, name: str = '') -> None:
+         if not name:
+-            title = cast(nodes.title, node[0])
++            title = cast('nodes.title', node[0])
+             name = self.escape(title.astext())
+         self.body.append('\n@cartouche\n@quotation %s ' % name)
+ 
+@@ -1173,7 +1174,7 @@ def visit_topic(self, node: Element) -> None:
+         # ignore TOC's since we have to have a "menu" anyway
+         if 'contents' in node.get('classes', []):
+             raise nodes.SkipNode
+-        title = cast(nodes.title, node[0])
++        title = cast('nodes.title', node[0])
+         self.visit_rubric(title)
+         self.body.append('%s\n' % self.escape(title.astext()))
+         self.depart_rubric(title)
+@@ -1307,7 +1308,7 @@ def unknown_departure(self, node: Node) -> None:
+ 
+     def visit_productionlist(self, node: Element) -> None:
+         self.visit_literal_block(None)
+-        productionlist = cast(Iterable[addnodes.production], node)
++        productionlist = cast('Iterable[addnodes.production]', node)
+         names = (production['tokenname'] for production in productionlist)
+         maxlen = max(len(name) for name in names)
+ 
+@@ -1388,8 +1389,8 @@ def depart_glossary(self, node: Element) -> None:
+         pass
+ 
+     def visit_acks(self, node: Element) -> None:
+-        bullet_list = cast(nodes.bullet_list, node[0])
+-        list_items = cast(Iterable[nodes.list_item], bullet_list)
++        bullet_list = cast('nodes.bullet_list', node[0])
++        list_items = cast('Iterable[nodes.list_item]', bullet_list)
+         self.body.append('\n\n')
+         self.body.append(', '.join(n.astext() for n in list_items) + '.')
+         self.body.append('\n\n')
+diff --git a/sphinx/writers/text.py b/sphinx/writers/text.py
+index c16181ec247..43648c5a6b9 100644
+--- a/sphinx/writers/text.py
++++ b/sphinx/writers/text.py
+@@ -6,7 +6,6 @@
+ import os
+ import re
+ import textwrap
+-from collections.abc import Iterable, Iterator, Sequence
+ from itertools import chain, groupby, pairwise
+ from typing import TYPE_CHECKING, Any, ClassVar, cast
+ 
+@@ -18,6 +17,8 @@
+ from sphinx.util.docutils import SphinxTranslator
+ 
+ if TYPE_CHECKING:
++    from collections.abc import Iterable, Iterator, Sequence
++
+     from docutils.nodes import Element, Text
+ 
+     from sphinx.builders.text import TextBuilder
+@@ -381,7 +382,7 @@ def translate(self) -> None:
+         assert isinstance(self.document, nodes.document)
+         visitor = self.builder.create_translator(self.document, self.builder)
+         self.document.walkabout(visitor)
+-        self.output = cast(TextTranslator, visitor).body
++        self.output = cast('TextTranslator', visitor).body
+ 
+ 
+ class TextTranslator(SphinxTranslator):
+@@ -776,7 +777,7 @@ def depart_caption(self, node: Element) -> None:
+ 
+     def visit_productionlist(self, node: Element) -> None:
+         self.new_state()
+-        productionlist = cast(Iterable[addnodes.production], node)
++        productionlist = cast('Iterable[addnodes.production]', node)
+         names = (production['tokenname'] for production in productionlist)
+         maxlen = max(len(name) for name in names)
+         lastname = None
+@@ -791,7 +792,7 @@ def visit_productionlist(self, node: Element) -> None:
+         raise nodes.SkipNode
+ 
+     def visit_footnote(self, node: Element) -> None:
+-        label = cast(nodes.label, node[0])
++        label = cast('nodes.label', node[0])
+         self._footnote = label.astext().strip()
+         self.new_state(len(self._footnote) + 3)
+ 
+@@ -923,8 +924,8 @@ def depart_table(self, node: Element) -> None:
+         self.end_state(wrap=False)
+ 
+     def visit_acks(self, node: Element) -> None:
+-        bullet_list = cast(nodes.bullet_list, node[0])
+-        list_items = cast(Iterable[nodes.list_item], bullet_list)
++        bullet_list = cast('nodes.bullet_list', node[0])
++        list_items = cast('Iterable[nodes.list_item]', bullet_list)
+         self.new_state(0)
+         self.add_text(', '.join(n.astext() for n in list_items) + '.')
+         self.end_state()
+diff --git a/tests/test_domains/test_domain_std.py b/tests/test_domains/test_domain_std.py
+index 4684596bd70..eb01c8e7093 100644
+--- a/tests/test_domains/test_domain_std.py
++++ b/tests/test_domains/test_domain_std.py
+@@ -414,7 +414,7 @@ def test_cmdoption(app):
+         entries=[('pair', 'ls command line option; -l', 'cmdoption-ls-l', '', None)],
+     )
+     assert ('ls', '-l') in domain.progoptions
+-    assert domain.progoptions[('ls', '-l')] == ('index', 'cmdoption-ls-l')
++    assert domain.progoptions['ls', '-l'] == ('index', 'cmdoption-ls-l')
+ 
+ 
+ @pytest.mark.sphinx('html', testroot='root')
+@@ -441,7 +441,7 @@ def test_cmdoption_for_None(app):
+         entries=[('pair', 'command line option; -l', 'cmdoption-l', '', None)],
+     )
+     assert (None, '-l') in domain.progoptions
+-    assert domain.progoptions[(None, '-l')] == ('index', 'cmdoption-l')
++    assert domain.progoptions[None, '-l'] == ('index', 'cmdoption-l')
+ 
+ 
+ @pytest.mark.sphinx('html', testroot='root')
+@@ -481,8 +481,8 @@ def test_multiple_cmdoptions(app):
+     )
+     assert ('cmd', '-o') in domain.progoptions
+     assert ('cmd', '--output') in domain.progoptions
+-    assert domain.progoptions[('cmd', '-o')] == ('index', 'cmdoption-cmd-o')
+-    assert domain.progoptions[('cmd', '--output')] == ('index', 'cmdoption-cmd-o')
++    assert domain.progoptions['cmd', '-o'] == ('index', 'cmdoption-cmd-o')
++    assert domain.progoptions['cmd', '--output'] == ('index', 'cmdoption-cmd-o')
+ 
+ 
+ @pytest.mark.sphinx('html', testroot='productionlist')
+@@ -504,19 +504,23 @@ def test_productionlist(app):
+     ul = nodes[2]
+     cases = []
+     for li in list(ul):
+-        assert len(list(li)) == 1
+-        p = list(li)[0]
++        li_list = list(li)
++        assert len(li_list) == 1
++        p = li_list[0]
+         assert p.tag == 'p'
+         text = str(p.text).strip(' :')
+-        assert len(list(p)) == 1
+-        a = list(p)[0]
++        p_list = list(p)
++        assert len(p_list) == 1
++        a = p_list[0]
+         assert a.tag == 'a'
+         link = a.get('href')
+-        assert len(list(a)) == 1
+-        code = list(a)[0]
++        a_list = list(a)
++        assert len(a_list) == 1
++        code = a_list[0]
+         assert code.tag == 'code'
+-        assert len(list(code)) == 1
+-        span = list(code)[0]
++        code_list = list(code)
++        assert len(code_list) == 1
++        span = code_list[0]
+         assert span.tag == 'span'
+         linkText = span.text.strip()
+         cases.append((text, link, linkText))
+diff --git a/tests/test_extensions/test_ext_coverage.py b/tests/test_extensions/test_ext_coverage.py
+index f788314af91..5dc2f95a8bc 100644
+--- a/tests/test_extensions/test_ext_coverage.py
++++ b/tests/test_extensions/test_ext_coverage.py
+@@ -39,7 +39,7 @@ def test_build(app):
+     )
+     assert len(undoc_c) == 1
+     # the key is the full path to the header file, which isn't testable
+-    assert list(undoc_c.values())[0] == {('function', 'Py_SphinxTest')}
++    assert next(iter(undoc_c.values())) == {('function', 'Py_SphinxTest')}
+ 
+     assert 'autodoc_target' in undoc_py
+     assert 'funcs' in undoc_py['autodoc_target']
+diff --git a/tests/test_extensions/test_ext_doctest.py b/tests/test_extensions/test_ext_doctest.py
+index fc86ee47f5d..4cfbe69ddde 100644
+--- a/tests/test_extensions/test_ext_doctest.py
++++ b/tests/test_extensions/test_ext_doctest.py
+@@ -122,7 +122,7 @@ def test_skipif(app):
+ 
+ 
+ def record(directive, part, should_skip):
+-    recorded_calls[(directive, part, should_skip)] += 1
++    recorded_calls[directive, part, should_skip] += 1
+     return f'Recorded {directive} {part} {should_skip}'
+ 
+ 
+diff --git a/tests/test_pycode/test_pycode.py b/tests/test_pycode/test_pycode.py
+index cc08ff62c11..2d5ec66d32f 100644
+--- a/tests/test_pycode/test_pycode.py
++++ b/tests/test_pycode/test_pycode.py
+@@ -151,15 +151,15 @@ def test_ModuleAnalyzer_find_attr_docs():
+         ('Foo', 'attr8'),
+         ('Foo', 'attr9'),
+     }
+-    assert docs[('Foo', 'attr1')] == ['comment before attr1', '']
+-    assert docs[('Foo', 'attr3')] == ['attribute comment for attr3', '']
+-    assert docs[('Foo', 'attr4')] == ['long attribute comment', '']
+-    assert docs[('Foo', 'attr4')] == ['long attribute comment', '']
+-    assert docs[('Foo', 'attr5')] == ['attribute comment for attr5', '']
+-    assert docs[('Foo', 'attr6')] == ['this comment is ignored', '']
+-    assert docs[('Foo', 'attr7')] == ['this comment is ignored', '']
+-    assert docs[('Foo', 'attr8')] == ['attribute comment for attr8', '']
+-    assert docs[('Foo', 'attr9')] == ['string after attr9', '']
++    assert docs['Foo', 'attr1'] == ['comment before attr1', '']
++    assert docs['Foo', 'attr3'] == ['attribute comment for attr3', '']
++    assert docs['Foo', 'attr4'] == ['long attribute comment', '']
++    assert docs['Foo', 'attr4'] == ['long attribute comment', '']
++    assert docs['Foo', 'attr5'] == ['attribute comment for attr5', '']
++    assert docs['Foo', 'attr6'] == ['this comment is ignored', '']
++    assert docs['Foo', 'attr7'] == ['this comment is ignored', '']
++    assert docs['Foo', 'attr8'] == ['attribute comment for attr8', '']
++    assert docs['Foo', 'attr9'] == ['string after attr9', '']
+     assert analyzer.tagorder == {
+         'Foo': 0,
+         'Foo.__init__': 8,
+@@ -189,5 +189,5 @@ def test_ModuleAnalyzer_find_attr_docs_for_posonlyargs_method():
+     analyzer = ModuleAnalyzer.for_string(code, 'module')
+     docs = analyzer.find_attr_docs()
+     assert set(docs) == {('Foo', 'attr')}
+-    assert docs[('Foo', 'attr')] == ['attribute comment', '']
++    assert docs['Foo', 'attr'] == ['attribute comment', '']
+     assert analyzer.tagorder == {'Foo': 0, 'Foo.__init__': 1, 'Foo.attr': 2}
+diff --git a/tests/test_util/test_util_inspect.py b/tests/test_util/test_util_inspect.py
+index 5c868efa6e9..8e6c1e01bcb 100644
+--- a/tests/test_util/test_util_inspect.py
++++ b/tests/test_util/test_util_inspect.py
+@@ -62,7 +62,7 @@ async def coroutinefunc():
+     pass
+ 
+ 
+-async def asyncgenerator():
++async def asyncgenerator():  # NoQA: RUF029
+     yield
+ 
+ 
+diff --git a/tests/test_util/test_util_nodes.py b/tests/test_util/test_util_nodes.py
+index a330eff366d..9595e4a64df 100644
+--- a/tests/test_util/test_util_nodes.py
++++ b/tests/test_util/test_util_nodes.py
+@@ -180,7 +180,7 @@ def test_extract_messages_without_rawsource():
+     document.append(p)
+     _transform(document)
+     assert_node_count(extract_messages(document), nodes.TextElement, 1)
+-    assert [m for n, m in extract_messages(document)][0], 'text sentence'
++    assert next(m for n, m in extract_messages(document)), 'text sentence'
+ 
+ 
+ def test_clean_astext():

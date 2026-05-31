@@ -1,0 +1,17 @@
+diff --git a/beetsplug/lastgenre/__init__.py b/beetsplug/lastgenre/__init__.py
+index a8c8e7c048..1f2f01cb09 100644
+--- a/beetsplug/lastgenre/__init__.py
++++ b/beetsplug/lastgenre/__init__.py
+@@ -363,9 +363,10 @@ def _get_genre(
+ 
+         if genres and not self.config["force"]:
+             # Without force pre-populated tags are returned as-is.
++            label = "keep any, no-force"
+             if isinstance(obj, library.Item):
+-                return obj.get("genre", with_album=False), "keep any, no-force"
+-            return obj.get("genre"), "keep any, no-force"
++                return obj.get("genre", with_album=False), label
++            return obj.get("genre"), label
+ 
+         if self.config["force"]:
+             # Force doesn't keep any unless keep_existing is set.

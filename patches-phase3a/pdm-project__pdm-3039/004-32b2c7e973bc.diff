@@ -1,0 +1,47 @@
+diff --git a/src/pdm/models/candidates.py b/src/pdm/models/candidates.py
+index 9d062d6d8f..18edd3b5de 100644
+--- a/src/pdm/models/candidates.py
++++ b/src/pdm/models/candidates.py
+@@ -237,6 +237,10 @@ def requires_python(self) -> str:
+ 
+     @requires_python.setter
+     def requires_python(self, value: str) -> None:
++        try:  # ensure the specifier is valid
++            PySpecSet(value)
++        except InvalidPyVersion:
++            return
+         self._requires_python = value
+ 
+     @no_type_check
+diff --git a/tests/models/test_candidates.py b/tests/models/test_candidates.py
+index fd60d8a223..058372ff09 100644
+--- a/tests/models/test_candidates.py
++++ b/tests/models/test_candidates.py
+@@ -5,7 +5,6 @@
+ import pytest
+ from unearth import Link
+ 
+-from pdm.exceptions import CandidateNotFound
+ from pdm.models.candidates import Candidate
+ from pdm.models.requirements import Requirement, parse_requirement
+ from pdm.models.specifiers import PySpecSet
+@@ -272,8 +271,7 @@ def test_legacy_pep345_tag_link(project):
+     project.project_config["pypi.url"] = "https://my.pypi.org/simple"
+     req = parse_requirement("pep345-legacy")
+     repo = project.get_repository()
+-    with pytest.raises(CandidateNotFound):
+-        _ = next(iter(repo.find_candidates(req)))
++    _ = next(iter(repo.find_candidates(req)))
+ 
+ 
+ @pytest.mark.filterwarnings("ignore::FutureWarning")
+@@ -281,8 +279,7 @@ def test_ignore_invalid_py_version(project):
+     project.project_config["pypi.url"] = "https://my.pypi.org/simple"
+     req = parse_requirement("wheel")
+     repo = project.get_repository()
+-    with pytest.raises(CandidateNotFound):
+-        _ = next(iter(repo.find_candidates(req)))
++    _ = next(iter(repo.find_candidates(req)))
+ 
+ 
+ def test_find_candidates_from_find_links(project):

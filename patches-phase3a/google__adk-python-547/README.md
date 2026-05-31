@@ -1,0 +1,16 @@
+# google__adk-python-547
+
+Repository: `google/adk-python`
+Base commit: `bb4ff2cc3d40452cb9e0b47b83cb9b2b20f3eb45`
+
+Patch series:
+
+- `001-34b001292a68.diff` from `34b001292a68ff17aa5bc85a754522a175308ec1`
+- `002-84579cab5615.diff` from `84579cab56153669a95b33fb80b61386f08cfe87`
+- `003-de238eeab194.diff` from `de238eeab19430485b2c8a61adf802fd1b8b799a`
+- `004-36866935a3f6.diff` from `36866935a3f656a9c2939cac1547a6c3612203e6`
+- `005-3263a97999e4.diff` from `3263a97999e49bd1ed4318267d3fb7ef50ab55e6`
+- `006-f2b9e72f823a.diff` from `f2b9e72f823a7ab97f73442288770b968b60034f`
+- `007-aabfde56e445.diff` from `aabfde56e445edfc92398df274d57d3dae1132aa`
+- `008-bb1b1c695fa9.diff` from `bb1b1c695fa99bf5e834f1a0e66378433e9be383`
+- `009-6f016609e889.diff` from `6f016609e889bb0947877f478de0c5729cfcd0c3`

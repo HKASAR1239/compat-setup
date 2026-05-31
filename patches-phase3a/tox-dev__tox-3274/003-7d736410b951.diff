@@ -1,0 +1,14 @@
+diff --git a/docs/changelog/3272.bugfix.rst b/docs/changelog/3272.bugfix.rst
+new file mode 100644
+index 0000000000..7877bd400a
+--- /dev/null
++++ b/docs/changelog/3272.bugfix.rst
+@@ -0,0 +1 @@
++Fix broken input parsing for ``--discover`` flag. - by :user:`mimre25`
+diff --git a/docs/changelog/3274.doc.rst b/docs/changelog/3274.doc.rst
+new file mode 100644
+index 0000000000..d2ffe60282
+--- /dev/null
++++ b/docs/changelog/3274.doc.rst
+@@ -0,0 +1 @@
++Rephrase ``--discover`` flag's description to avoid confusion between paths and executables. - by :user:`mimre25`

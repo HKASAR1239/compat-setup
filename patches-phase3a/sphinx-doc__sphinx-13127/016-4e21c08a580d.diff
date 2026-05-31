@@ -1,0 +1,1888 @@
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index c2591d82a58..caf633d3785 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -342,4 +342,4 @@ jobs:
+       env:
+         VIRTUALENV_SYSTEM_SITE_PACKAGES: "1"
+     - name: codecov
+-      uses: codecov/codecov-action@v4
++      uses: codecov/codecov-action@v5
+diff --git a/.ruff.toml b/.ruff.toml
+index bb1503095de..be9ac015a33 100644
+--- a/.ruff.toml
++++ b/.ruff.toml
+@@ -292,10 +292,10 @@ select = [
+ [lint.per-file-ignores]
+ "doc/*" = [
+     "ANN",  # documentation doesn't need annotations
+-    "TCH001",  # documentation doesn't need type-checking blocks
++    "TC001",  # documentation doesn't need type-checking blocks
+ ]
+ "doc/conf.py" = ["INP001", "W605"]
+-"doc/development/tutorials/examples/*" = ["INP001"]
++"doc/development/tutorials/examples/*" = ["I002", "INP001"]
+ # allow print() in the tutorial
+ "doc/development/tutorials/examples/recipe.py" = [
+     "FURB118",
+@@ -360,7 +360,7 @@ select = [
+ 
+ # these tests need old ``typing`` generic aliases
+ "tests/test_util/test_util_typing.py" = ["UP006", "UP007", "UP035"]
+-"tests/test_util/typing_test_data.py" = ["FA100", "PYI030", "UP006", "UP007", "UP035"]
++"tests/test_util/typing_test_data.py" = ["FA100", "I002", "PYI030", "UP006", "UP007", "UP035"]
+ 
+ "utils/*" = [
+     "T201",  # whitelist ``print`` for stdout messages
+@@ -377,6 +377,9 @@ inline-quotes = "single"
+ forced-separate = [
+     "tests",
+ ]
++required-imports = [
++    "from __future__ import annotations",
++]
+ 
+ [format]
+ preview = true
+diff --git a/CHANGES.rst b/CHANGES.rst
+index 72f0fa96c28..9ad42567414 100644
+--- a/CHANGES.rst
++++ b/CHANGES.rst
+@@ -23,6 +23,9 @@ Bugs fixed
+ 
+ * #13060: HTML Search: use ``Map`` to store per-file term scores.
+   Patch by James Addison
++* LaTeX: fix a ``7.4.0`` typo in a default for ``\sphinxboxsetup``
++  (refs: PR #13152).
++  Patch by Jean-François B.
+ * #11233: linkcheck: match redirect URIs against :confval:`linkcheck_ignore` by
+   overriding session-level ``requests.get_redirect_target``.
+ 
+diff --git a/doc/man/sphinx-build.rst b/doc/man/sphinx-build.rst
+index 4c8fde48e96..63af7e49b4c 100644
+--- a/doc/man/sphinx-build.rst
++++ b/doc/man/sphinx-build.rst
+@@ -141,7 +141,7 @@ Options
+    .. versionchanged:: 6.2
+       Add ``--jobs`` long option.
+ 
+-.. option:: -c path, --config-dir path
++.. option:: -c path, --conf-dir path
+ 
+    Don't look for the :file:`conf.py` in the source directory, but use the given
+    configuration directory instead.  Note that various other files and paths
+@@ -152,7 +152,7 @@ Options
+    .. versionadded:: 0.3
+ 
+    .. versionchanged:: 7.3
+-      Add ``--config-dir`` long option.
++      Add ``--conf-dir`` long option.
+ 
+ .. option:: -C, --isolated
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index 11ed6a00b9d..f479619fee4 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -82,7 +82,7 @@ docs = [
+ ]
+ lint = [
+     "flake8>=6.0",
+-    "ruff==0.7.3",
++    "ruff==0.8.0",
+     "mypy==1.13.0",
+     "sphinx-lint>=0.9",
+     "types-colorama==0.4.15.20240311",
+diff --git a/sphinx/__init__.py b/sphinx/__init__.py
+index 6b610e28899..27e613dc3c9 100644
+--- a/sphinx/__init__.py
++++ b/sphinx/__init__.py
+@@ -1,5 +1,7 @@
+ """The Sphinx documentation toolchain."""
+ 
++from __future__ import annotations
++
+ __version__ = '8.2.0'
+ __display_version__ = __version__  # used for command line version
+ 
+diff --git a/sphinx/__main__.py b/sphinx/__main__.py
+index dd0df10ecbb..13d626301a9 100644
+--- a/sphinx/__main__.py
++++ b/sphinx/__main__.py
+@@ -1,5 +1,7 @@
+ """The Sphinx documentation toolchain."""
+ 
++from __future__ import annotations
++
+ import sys
+ 
+ from sphinx.cmd.build import main
+diff --git a/sphinx/_cli/util/colour.py b/sphinx/_cli/util/colour.py
+index bc1a610ba0e..dd01c56cd58 100644
+--- a/sphinx/_cli/util/colour.py
++++ b/sphinx/_cli/util/colour.py
+@@ -4,7 +4,7 @@
+ 
+ import os
+ import sys
+-from collections.abc import Callable  # NoQA: TCH003
++from collections.abc import Callable  # NoQA: TC003
+ 
+ if sys.platform == 'win32':
+     import colorama
+diff --git a/sphinx/builders/__init__.py b/sphinx/builders/__init__.py
+index 1420417380d..620ff82abe5 100644
+--- a/sphinx/builders/__init__.py
++++ b/sphinx/builders/__init__.py
+@@ -81,7 +81,7 @@ class Builder:
+     # doctree versioning method
+     versioning_method = 'none'
+     versioning_compare = False
+-    #: Whether it is safe to make parallel :meth:`~.Builder.write_doc()` calls.
++    #: Whether it is safe to make parallel :meth:`~.Builder.write_doc` calls.
+     allow_parallel: bool = False
+     # support translation
+     use_message_catalog = True
+diff --git a/sphinx/builders/changes.py b/sphinx/builders/changes.py
+index 918ed3bcaee..49cab2c7a8c 100644
+--- a/sphinx/builders/changes.py
++++ b/sphinx/builders/changes.py
+@@ -61,10 +61,7 @@ def write_documents(self, _docnames: Set[str]) -> None:
+             return
+         logger.info(bold(__('writing summary file...')))
+         for changeset in changesets:
+-            if isinstance(changeset.descname, tuple):
+-                descname = changeset.descname[0]
+-            else:
+-                descname = changeset.descname
++            descname = changeset.descname
+             ttext = self.typemap[changeset.type]
+             context = changeset.content.replace('\n', ' ')
+             if descname and changeset.docname.startswith('c-api'):
+diff --git a/sphinx/builders/latex/nodes.py b/sphinx/builders/latex/nodes.py
+index f13c29cf6ea..0e7ebb6a7b0 100644
+--- a/sphinx/builders/latex/nodes.py
++++ b/sphinx/builders/latex/nodes.py
+@@ -1,5 +1,7 @@
+ """Additional nodes for LaTeX writer."""
+ 
++from __future__ import annotations
++
+ from docutils import nodes
+ 
+ 
+diff --git a/sphinx/directives/__init__.py b/sphinx/directives/__init__.py
+index 181c6f81a07..d92678ab8f2 100644
+--- a/sphinx/directives/__init__.py
++++ b/sphinx/directives/__init__.py
+@@ -9,11 +9,11 @@
+ from docutils.parsers.rst import directives, roles
+ 
+ from sphinx import addnodes
+-from sphinx.addnodes import desc_signature  # NoQA: TCH001
++from sphinx.addnodes import desc_signature  # NoQA: TC001
+ from sphinx.util import docutils
+ from sphinx.util.docfields import DocFieldTransformer, Field, TypedField
+ from sphinx.util.docutils import SphinxDirective
+-from sphinx.util.typing import ExtensionMetadata, OptionSpec  # NoQA: TCH001
++from sphinx.util.typing import ExtensionMetadata, OptionSpec  # NoQA: TC001
+ 
+ if TYPE_CHECKING:
+     from docutils.nodes import Node
+@@ -282,7 +282,11 @@ def run(self) -> list[Node]:
+ 
+         if self.names:
+             # needed for association of version{added,changed} directives
+-            self.env.temp_data['object'] = self.names[0]
++            object_name: ObjDescT = self.names[0]
++            if isinstance(object_name, tuple):
++                self.env.temp_data['object'] = str(object_name[0])
++            else:
++                self.env.temp_data['object'] = str(object_name)
+         self.before_content()
+         content_children = self.parse_content_to_nodes(allow_section_headings=True)
+         content_node = addnodes.desc_content('', *content_children)
+@@ -292,7 +296,7 @@ def run(self) -> list[Node]:
+             'object-description-transform', self.domain, self.objtype, content_node
+         )
+         DocFieldTransformer(self).transform_all(content_node)
+-        self.env.temp_data['object'] = None
++        self.env.temp_data['object'] = ''
+         self.after_content()
+ 
+         if node['no-typesetting']:
+diff --git a/sphinx/domains/c/_ast.py b/sphinx/domains/c/_ast.py
+index 9fedbed5a8c..09f7388253e 100644
+--- a/sphinx/domains/c/_ast.py
++++ b/sphinx/domains/c/_ast.py
+@@ -68,6 +68,9 @@ def __str__(self) -> str:
+     def get_display_string(self) -> str:
+         return "[anonymous]" if self.is_anonymous else self.name
+ 
++    def _stringify(self, transform: StringifyTransform) -> str:
++        return transform(self.get_display_string())
++
+     def describe_signature(self, signode: TextElement, mode: str, env: BuildEnvironment,
+                            prefix: str, symbol: Symbol) -> None:
+         # note: slightly different signature of describe_signature due to the prefix
+diff --git a/sphinx/domains/changeset.py b/sphinx/domains/changeset.py
+index a27c5f571a8..abf622d5bb8 100644
+--- a/sphinx/domains/changeset.py
++++ b/sphinx/domains/changeset.py
+@@ -41,7 +41,7 @@ class ChangeSet(NamedTuple):
+     docname: str
+     lineno: int
+     module: str | None
+-    descname: str | None
++    descname: str
+     content: str
+ 
+ 
+@@ -123,7 +123,7 @@ def changesets(self) -> dict[str, list[ChangeSet]]:
+     def note_changeset(self, node: addnodes.versionmodified) -> None:
+         version = node['version']
+         module = self.env.ref_context.get('py:module')
+-        objname = self.env.temp_data.get('object')
++        objname = self.env.temp_data.get('object', '')
+         changeset = ChangeSet(node['type'], self.env.docname, node.line,  # type: ignore[arg-type]
+                               module, objname, node.astext())
+         self.changesets.setdefault(version, []).append(changeset)
+diff --git a/sphinx/environment/adapters/asset.py b/sphinx/environment/adapters/asset.py
+index dc0cf766957..9e6875eeea9 100644
+--- a/sphinx/environment/adapters/asset.py
++++ b/sphinx/environment/adapters/asset.py
+@@ -1,8 +1,14 @@
+ """Assets adapter for sphinx.environment."""
+ 
+-from sphinx.environment import BuildEnvironment
++from __future__ import annotations
++
++from typing import TYPE_CHECKING
++
+ from sphinx.util._pathlib import _StrPath
+ 
++if TYPE_CHECKING:
++    from sphinx.environment import BuildEnvironment
++
+ 
+ class ImageAdapter:
+     def __init__(self, env: BuildEnvironment) -> None:
+diff --git a/sphinx/ext/intersphinx/__main__.py b/sphinx/ext/intersphinx/__main__.py
+index 9b788d2362c..aa132f9c6d8 100644
+--- a/sphinx/ext/intersphinx/__main__.py
++++ b/sphinx/ext/intersphinx/__main__.py
+@@ -1,5 +1,7 @@
+ """Command line interface for the intersphinx extension."""
+ 
++from __future__ import annotations
++
+ import logging as _logging
+ import sys
+ 
+diff --git a/sphinx/ext/viewcode.py b/sphinx/ext/viewcode.py
+index b64d67bdad3..da1713aa6fa 100644
+--- a/sphinx/ext/viewcode.py
++++ b/sphinx/ext/viewcode.py
+@@ -65,8 +65,8 @@ def _get_full_modname(modname: str, attribute: str) -> str | None:
+         return getattr(value, '__module__', None)
+     except AttributeError:
+         # sphinx.ext.viewcode can't follow class instance attribute
+-        # then AttributeError logging output only verbose mode.
+-        logger.verbose("Didn't find %s in %s", attribute, modname)
++        # then AttributeError logging output only debug mode.
++        logger.debug("Didn't find %s in %s", attribute, modname)
+         return None
+     except Exception as e:
+         # sphinx.ext.viewcode follow python domain directives.
+diff --git a/sphinx/pygments_styles.py b/sphinx/pygments_styles.py
+index 55ca71b19d2..57924664f81 100644
+--- a/sphinx/pygments_styles.py
++++ b/sphinx/pygments_styles.py
+@@ -1,5 +1,7 @@
+ """Sphinx theme specific highlighting styles."""
+ 
++from __future__ import annotations
++
+ from pygments.style import Style
+ from pygments.styles.friendly import FriendlyStyle
+ from pygments.token import (
+diff --git a/sphinx/testing/restructuredtext.py b/sphinx/testing/restructuredtext.py
+index 620e8483492..7231c464c72 100644
+--- a/sphinx/testing/restructuredtext.py
++++ b/sphinx/testing/restructuredtext.py
+@@ -1,11 +1,18 @@
+-from docutils import nodes
++from __future__ import annotations
++
++from typing import TYPE_CHECKING
++
+ from docutils.core import publish_doctree
+ 
+-from sphinx.application import Sphinx
+ from sphinx.io import SphinxStandaloneReader
+ from sphinx.parsers import RSTParser
+ from sphinx.util.docutils import sphinx_domains
+ 
++if TYPE_CHECKING:
++    from docutils import nodes
++
++    from sphinx.application import Sphinx
++
+ 
+ def parse(app: Sphinx, text: str, docname: str = 'index') -> nodes.document:
+     """Parse a string as reStructuredText with Sphinx application."""
+diff --git a/sphinx/texinputs/sphinx.sty b/sphinx/texinputs/sphinx.sty
+index 0d52676c4fe..8837485c5f7 100644
+--- a/sphinx/texinputs/sphinx.sty
++++ b/sphinx/texinputs/sphinx.sty
+@@ -9,7 +9,7 @@
+ % by the Sphinx LaTeX writer.
+ 
+ \NeedsTeXFormat{LaTeX2e}[1995/12/01]
+-\ProvidesPackage{sphinx}[2024/10/11 v8.1.1 Sphinx LaTeX package (sphinx-doc)]
++\ProvidesPackage{sphinx}[2024/11/23 v8.2.0 Sphinx LaTeX package (sphinx-doc)]
+ 
+ % provides \ltx@ifundefined
+ % (many packages load ltxcmds: graphicx does for pdftex and lualatex but
+@@ -1098,12 +1098,13 @@
+ % Some of these defaults got already set.  But we now list them all explicitly
+ % for a complete initial configuration of reset storage.
+ % At 7.4.0, \fboxrule and \fboxsep replaced by 0.4pt and 3pt which are anyhow
+-% the defaults for these LaTeX dimensions.
++% the defaults for these LaTeX dimensions. 8.2.0 corrected border-radius
++% default back to 3pt (\fboxsep) not 0.4pt (\fboxrule).
+ \let\spx@boxes@sphinxbox@defaults\@gobble
+ \sphinxboxsetup{%
+                 border-width=0.4pt,
+                 padding=3pt,
+-                border-radius=0.4pt,
++                border-radius=3pt,
+                 box-shadow=none,
+ % MEMO: as xcolor is loaded, \spx@defineorletcolor has a "\colorlet" branch
+ % which makes this syntax acceptable and avoids duplicating here the values.
+diff --git a/sphinx/util/_lines.py b/sphinx/util/_lines.py
+index e9f8899cd29..ab0e2e032bf 100644
+--- a/sphinx/util/_lines.py
++++ b/sphinx/util/_lines.py
+@@ -1,3 +1,6 @@
++from __future__ import annotations
++
++
+ def parse_line_num_spec(spec: str, total: int) -> list[int]:
+     """Parse a line number spec (such as "1,2,4-6") and return a list of
+     wanted line numbers.
+diff --git a/sphinx/util/build_phase.py b/sphinx/util/build_phase.py
+index 76e94a9b0d2..382fc722ee8 100644
+--- a/sphinx/util/build_phase.py
++++ b/sphinx/util/build_phase.py
+@@ -1,5 +1,7 @@
+ """Build phase of Sphinx application."""
+ 
++from __future__ import annotations
++
+ from enum import IntEnum
+ 
+ 
+diff --git a/sphinx/util/cfamily.py b/sphinx/util/cfamily.py
+index 127b1b247b5..05b5b89222f 100644
+--- a/sphinx/util/cfamily.py
++++ b/sphinx/util/cfamily.py
+@@ -115,7 +115,7 @@ def clone(self) -> Any:
+         return deepcopy(self)
+ 
+     def _stringify(self, transform: StringifyTransform) -> str:
+-        raise NotImplementedError(repr(self))
++        raise NotImplementedError
+ 
+     def __str__(self) -> str:
+         return self._stringify(str)
+@@ -124,7 +124,9 @@ def get_display_string(self) -> str:
+         return self._stringify(lambda ast: ast.get_display_string())
+ 
+     def __repr__(self) -> str:
+-        return f'<{self.__class__.__name__}: {self._stringify(repr)}>'
++        if repr_string := self._stringify(repr):
++            return f'<{self.__class__.__name__}: {repr_string}>'
++        return f'<{self.__class__.__name__}>'
+ 
+ 
+ ################################################################################
+diff --git a/sphinx/util/docutils.py b/sphinx/util/docutils.py
+index 87823bd69fd..f8fa00f4316 100644
+--- a/sphinx/util/docutils.py
++++ b/sphinx/util/docutils.py
+@@ -4,7 +4,7 @@
+ 
+ import os
+ import re
+-from collections.abc import Sequence  # NoQA: TCH003
++from collections.abc import Sequence  # NoQA: TC003
+ from contextlib import contextmanager
+ from copy import copy
+ from pathlib import Path
+@@ -14,7 +14,7 @@
+ from docutils import nodes
+ from docutils.io import FileOutput
+ from docutils.parsers.rst import Directive, directives, roles
+-from docutils.parsers.rst.states import Inliner  # NoQA: TCH002
++from docutils.parsers.rst.states import Inliner  # NoQA: TC002
+ from docutils.statemachine import State, StateMachine, StringList
+ from docutils.utils import Reporter, unescape
+ 
+@@ -29,7 +29,7 @@
+ )
+ 
+ if TYPE_CHECKING:
+-    from collections.abc import Callable, Iterator  # NoQA: TCH003
++    from collections.abc import Callable, Iterator  # NoQA: TC003
+     from types import ModuleType, TracebackType
+ 
+     from docutils.frontend import Values
+diff --git a/sphinx/util/http_date.py b/sphinx/util/http_date.py
+index d8c51ae9b58..db0ae306b54 100644
+--- a/sphinx/util/http_date.py
++++ b/sphinx/util/http_date.py
+@@ -3,6 +3,8 @@
+ Reference: https://www.rfc-editor.org/rfc/rfc7231#section-7.1.1.1
+ """
+ 
++from __future__ import annotations
++
+ import time
+ import warnings
+ from email.utils import parsedate_tz
+diff --git a/tests/test_builders/test_build.py b/tests/test_builders/test_build.py
+index 5f396cc48af..2b922eaca76 100644
+--- a/tests/test_builders/test_build.py
++++ b/tests/test_builders/test_build.py
+@@ -1,5 +1,7 @@
+ """Test all builders."""
+ 
++from __future__ import annotations
++
+ import os
+ import shutil
+ from contextlib import contextmanager
+diff --git a/tests/test_builders/test_build_changes.py b/tests/test_builders/test_build_changes.py
+index 69db01ba3e5..f252b3ce3a6 100644
+--- a/tests/test_builders/test_build_changes.py
++++ b/tests/test_builders/test_build_changes.py
+@@ -1,5 +1,7 @@
+ """Test the ChangesBuilder class."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ 
+diff --git a/tests/test_builders/test_build_dirhtml.py b/tests/test_builders/test_build_dirhtml.py
+index 3e78f1ed0c8..566fb1c20e3 100644
+--- a/tests/test_builders/test_build_dirhtml.py
++++ b/tests/test_builders/test_build_dirhtml.py
+@@ -1,5 +1,7 @@
+ """Test dirhtml builder."""
+ 
++from __future__ import annotations
++
+ import posixpath
+ 
+ import pytest
+diff --git a/tests/test_builders/test_build_epub.py b/tests/test_builders/test_build_epub.py
+index 3c2be6323d4..c025b2f8fc0 100644
+--- a/tests/test_builders/test_build_epub.py
++++ b/tests/test_builders/test_build_epub.py
+@@ -1,5 +1,7 @@
+ """Test the HTML builder and check output against XPath."""
+ 
++from __future__ import annotations
++
+ import os
+ import subprocess
+ import xml.etree.ElementTree as ET
+diff --git a/tests/test_builders/test_build_gettext.py b/tests/test_builders/test_build_gettext.py
+index 00d7f826ecc..d78f1e71b00 100644
+--- a/tests/test_builders/test_build_gettext.py
++++ b/tests/test_builders/test_build_gettext.py
+@@ -1,5 +1,7 @@
+ """Test the build process with gettext builder with the test root."""
+ 
++from __future__ import annotations
++
+ import gettext
+ import re
+ import subprocess
+diff --git a/tests/test_builders/test_build_html_assets.py b/tests/test_builders/test_build_html_assets.py
+index f7d21fe61b6..064c8c85ab5 100644
+--- a/tests/test_builders/test_build_html_assets.py
++++ b/tests/test_builders/test_build_html_assets.py
+@@ -1,5 +1,7 @@
+ """Test the HTML builder and check output against XPath."""
+ 
++from __future__ import annotations
++
+ import re
+ from pathlib import Path
+ 
+diff --git a/tests/test_builders/test_build_html_code.py b/tests/test_builders/test_build_html_code.py
+index d32c0b3e2b9..349e1d1641a 100644
+--- a/tests/test_builders/test_build_html_code.py
++++ b/tests/test_builders/test_build_html_code.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import pytest
+ 
+ 
+diff --git a/tests/test_builders/test_build_html_copyright.py b/tests/test_builders/test_build_html_copyright.py
+index 8e017ede4d7..7a18bceb603 100644
+--- a/tests/test_builders/test_build_html_copyright.py
++++ b/tests/test_builders/test_build_html_copyright.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import time
+ 
+ import pytest
+diff --git a/tests/test_builders/test_build_html_download.py b/tests/test_builders/test_build_html_download.py
+index 4855949cd60..f3f5a1fd43b 100644
+--- a/tests/test_builders/test_build_html_download.py
++++ b/tests/test_builders/test_build_html_download.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import hashlib
+ import re
+ 
+diff --git a/tests/test_builders/test_build_html_highlight.py b/tests/test_builders/test_build_html_highlight.py
+index 07d5e3e9887..0d713c7e871 100644
+--- a/tests/test_builders/test_build_html_highlight.py
++++ b/tests/test_builders/test_build_html_highlight.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ from unittest.mock import ANY, call, patch
+ 
+ import pytest
+diff --git a/tests/test_builders/test_build_html_image.py b/tests/test_builders/test_build_html_image.py
+index 5a061ed4dec..bb4baa5b643 100644
+--- a/tests/test_builders/test_build_html_image.py
++++ b/tests/test_builders/test_build_html_image.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import re
+ from pathlib import Path
+ 
+diff --git a/tests/test_builders/test_build_html_maths.py b/tests/test_builders/test_build_html_maths.py
+index 0f776917e48..9ab04922607 100644
+--- a/tests/test_builders/test_build_html_maths.py
++++ b/tests/test_builders/test_build_html_maths.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.errors import ConfigError
+diff --git a/tests/test_builders/test_build_html_numfig.py b/tests/test_builders/test_build_html_numfig.py
+index 833918fccdd..95279b37728 100644
+--- a/tests/test_builders/test_build_html_numfig.py
++++ b/tests/test_builders/test_build_html_numfig.py
+@@ -1,5 +1,7 @@
+ """Test the HTML builder and check output against XPath."""
+ 
++from __future__ import annotations
++
+ import os
+ import re
+ 
+diff --git a/tests/test_builders/test_build_html_tocdepth.py b/tests/test_builders/test_build_html_tocdepth.py
+index 7d6afc4c1c3..702aab8c69f 100644
+--- a/tests/test_builders/test_build_html_tocdepth.py
++++ b/tests/test_builders/test_build_html_tocdepth.py
+@@ -1,5 +1,7 @@
+ """Test the HTML builder and check output against XPath."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from tests.test_builders.xpath_html_util import _intradocument_hyperlink_check
+diff --git a/tests/test_builders/test_build_html_toctree.py b/tests/test_builders/test_build_html_toctree.py
+index a59de6328e6..08a6268cf4c 100644
+--- a/tests/test_builders/test_build_html_toctree.py
++++ b/tests/test_builders/test_build_html_toctree.py
+@@ -1,5 +1,7 @@
+ """Test the HTML builder and check output against XPath."""
+ 
++from __future__ import annotations
++
+ import re
+ from unittest.mock import patch
+ 
+diff --git a/tests/test_builders/test_build_latex.py b/tests/test_builders/test_build_latex.py
+index d95c5e4c286..71141d573d7 100644
+--- a/tests/test_builders/test_build_latex.py
++++ b/tests/test_builders/test_build_latex.py
+@@ -1,5 +1,7 @@
+ """Test the build process with LaTeX builder with the test root."""
+ 
++from __future__ import annotations
++
+ import http.server
+ import os
+ import re
+diff --git a/tests/test_builders/test_build_manpage.py b/tests/test_builders/test_build_manpage.py
+index 17ef00e612d..d80a067504f 100644
+--- a/tests/test_builders/test_build_manpage.py
++++ b/tests/test_builders/test_build_manpage.py
+@@ -1,5 +1,7 @@
+ """Test the build process with manpage builder with the test root."""
+ 
++from __future__ import annotations
++
+ import docutils
+ import pytest
+ 
+diff --git a/tests/test_builders/test_build_texinfo.py b/tests/test_builders/test_build_texinfo.py
+index e77306c3c52..5a8ce2d5e02 100644
+--- a/tests/test_builders/test_build_texinfo.py
++++ b/tests/test_builders/test_build_texinfo.py
+@@ -1,5 +1,7 @@
+ """Test the build process with Texinfo builder with the test root."""
+ 
++from __future__ import annotations
++
+ import re
+ import subprocess
+ from pathlib import Path
+diff --git a/tests/test_builders/test_build_warnings.py b/tests/test_builders/test_build_warnings.py
+index c89e33b93d5..cf307cbbf0c 100644
+--- a/tests/test_builders/test_build_warnings.py
++++ b/tests/test_builders/test_build_warnings.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import os
+ import re
+ import sys
+diff --git a/tests/test_builders/test_incremental_reading.py b/tests/test_builders/test_incremental_reading.py
+index e1ecda7f4af..4ae1b77e1b1 100644
+--- a/tests/test_builders/test_incremental_reading.py
++++ b/tests/test_builders/test_incremental_reading.py
+@@ -1,5 +1,7 @@
+ """Test the Builder class."""
+ 
++from __future__ import annotations
++
+ import sys
+ 
+ import pytest
+diff --git a/tests/test_config/test_copyright.py b/tests/test_config/test_copyright.py
+index 72cef60709b..fdabcc08123 100644
+--- a/tests/test_config/test_copyright.py
++++ b/tests/test_config/test_copyright.py
+@@ -1,5 +1,7 @@
+ """Test copyright year adjustment"""
+ 
++from __future__ import annotations
++
+ import time
+ 
+ import pytest
+diff --git a/tests/test_directives/test_directive_code.py b/tests/test_directives/test_directive_code.py
+index 0b81b65c1d8..5acebd08d60 100644
+--- a/tests/test_directives/test_directive_code.py
++++ b/tests/test_directives/test_directive_code.py
+@@ -1,5 +1,7 @@
+ """Test the code-block directive."""
+ 
++from __future__ import annotations
++
+ import pytest
+ from docutils import nodes
+ 
+diff --git a/tests/test_directives/test_directive_only.py b/tests/test_directives/test_directive_only.py
+index 297f304dfdb..7d5f15674c3 100644
+--- a/tests/test_directives/test_directive_only.py
++++ b/tests/test_directives/test_directive_only.py
+@@ -1,5 +1,7 @@
+ """Test the only directive with the test root."""
+ 
++from __future__ import annotations
++
+ import re
+ 
+ import pytest
+diff --git a/tests/test_directives/test_directive_option.py b/tests/test_directives/test_directive_option.py
+index 8f07e538545..11369a4346d 100644
+--- a/tests/test_directives/test_directive_option.py
++++ b/tests/test_directives/test_directive_option.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import pytest
+ 
+ 
+diff --git a/tests/test_directives/test_directive_other.py b/tests/test_directives/test_directive_other.py
+index 45a236bfd5a..3f09bb83789 100644
+--- a/tests/test_directives/test_directive_other.py
++++ b/tests/test_directives/test_directive_other.py
+@@ -1,5 +1,7 @@
+ """Test the other directives."""
+ 
++from __future__ import annotations
++
+ from pathlib import Path
+ 
+ import pytest
+diff --git a/tests/test_directives/test_directive_patch.py b/tests/test_directives/test_directive_patch.py
+index a35c3f32e81..a141cc86682 100644
+--- a/tests/test_directives/test_directive_patch.py
++++ b/tests/test_directives/test_directive_patch.py
+@@ -1,5 +1,7 @@
+ """Test the patched directives."""
+ 
++from __future__ import annotations
++
+ import pytest
+ from docutils import nodes
+ 
+diff --git a/tests/test_directives/test_directives_no_typesetting.py b/tests/test_directives/test_directives_no_typesetting.py
+index 8692cd387fa..68df4fbefcf 100644
+--- a/tests/test_directives/test_directives_no_typesetting.py
++++ b/tests/test_directives/test_directives_no_typesetting.py
+@@ -1,5 +1,7 @@
+ """Tests the directives"""
+ 
++from __future__ import annotations
++
+ import pytest
+ from docutils import nodes
+ 
+diff --git a/tests/test_domains/test_domain_c.py b/tests/test_domains/test_domain_c.py
+index d90bcd0b7b5..339938010f9 100644
+--- a/tests/test_domains/test_domain_c.py
++++ b/tests/test_domains/test_domain_c.py
+@@ -1,9 +1,11 @@
+ """Tests the C Domain"""
+ 
++from __future__ import annotations
++
+ import itertools
+ import xml.etree.ElementTree as ET
+ import zlib
+-from io import StringIO
++from typing import TYPE_CHECKING
+ 
+ import pytest
+ 
+@@ -29,6 +31,9 @@
+ from sphinx.util.cfamily import DefinitionError
+ from sphinx.writers.text import STDINDENT
+ 
++if TYPE_CHECKING:
++    from io import StringIO
++
+ 
+ class Config:
+     c_id_attributes = ['id_attr', 'LIGHTGBM_C_EXPORT']
+diff --git a/tests/test_domains/test_domain_cpp.py b/tests/test_domains/test_domain_cpp.py
+index a177991a535..96208bf7409 100644
+--- a/tests/test_domains/test_domain_cpp.py
++++ b/tests/test_domains/test_domain_cpp.py
+@@ -1,9 +1,11 @@
+ """Tests the C++ Domain"""
+ 
++from __future__ import annotations
++
+ import itertools
+ import re
+ import zlib
+-from io import StringIO
++from typing import TYPE_CHECKING
+ 
+ import pytest
+ 
+@@ -30,6 +32,9 @@
+ from sphinx.util.cfamily import DefinitionError, NoOldIdError
+ from sphinx.writers.text import STDINDENT
+ 
++if TYPE_CHECKING:
++    from io import StringIO
++
+ 
+ def parse(name, string):
+     class Config:
+diff --git a/tests/test_domains/test_domain_js.py b/tests/test_domains/test_domain_js.py
+index a51dd13be58..ab3ed26c6cb 100644
+--- a/tests/test_domains/test_domain_js.py
++++ b/tests/test_domains/test_domain_js.py
+@@ -1,5 +1,7 @@
+ """Tests the JavaScript Domain"""
+ 
++from __future__ import annotations
++
+ from unittest.mock import Mock
+ 
+ import docutils.utils
+diff --git a/tests/test_domains/test_domain_rst.py b/tests/test_domains/test_domain_rst.py
+index dc61792dd0a..9f1eec12c28 100644
+--- a/tests/test_domains/test_domain_rst.py
++++ b/tests/test_domains/test_domain_rst.py
+@@ -1,5 +1,7 @@
+ """Tests the reStructuredText domain."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx import addnodes
+diff --git a/tests/test_domains/test_domain_std.py b/tests/test_domains/test_domain_std.py
+index 4e5d88b63de..4684596bd70 100644
+--- a/tests/test_domains/test_domain_std.py
++++ b/tests/test_domains/test_domain_std.py
+@@ -1,5 +1,7 @@
+ """Tests the std domain"""
+ 
++from __future__ import annotations
++
+ from unittest import mock
+ 
+ import pytest
+diff --git a/tests/test_environment/test_environment.py b/tests/test_environment/test_environment.py
+index 10e98584342..c50dc21c484 100644
+--- a/tests/test_environment/test_environment.py
++++ b/tests/test_environment/test_environment.py
+@@ -1,5 +1,7 @@
+ """Test the BuildEnvironment class."""
+ 
++from __future__ import annotations
++
+ import shutil
+ from pathlib import Path
+ 
+@@ -190,7 +192,7 @@ def test_env_relfn2path(app):
+ 
+     # omit docname (w/o current docname)
+     app.env.temp_data.clear()
+-    with pytest.raises(KeyError):
++    with pytest.raises(KeyError, match=r"^'docname'$"):
+         app.env.relfn2path('images/logo.jpg')
+ 
+ 
+diff --git a/tests/test_environment/test_environment_indexentries.py b/tests/test_environment/test_environment_indexentries.py
+index 1de861abc49..e54e41e6f64 100644
+--- a/tests/test_environment/test_environment_indexentries.py
++++ b/tests/test_environment/test_environment_indexentries.py
+@@ -1,5 +1,7 @@
+ """Test the sphinx.environment.adapters.indexentries."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.environment.adapters.indexentries import IndexEntries
+diff --git a/tests/test_environment/test_environment_record_dependencies.py b/tests/test_environment/test_environment_record_dependencies.py
+index 0a17253c091..f5d80ca2f74 100644
+--- a/tests/test_environment/test_environment_record_dependencies.py
++++ b/tests/test_environment/test_environment_record_dependencies.py
+@@ -1,5 +1,7 @@
+ """Tests for ``record_dependencies``."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ 
+diff --git a/tests/test_environment/test_environment_toctree.py b/tests/test_environment/test_environment_toctree.py
+index 7f283c42231..0020fb9a161 100644
+--- a/tests/test_environment/test_environment_toctree.py
++++ b/tests/test_environment/test_environment_toctree.py
+@@ -1,5 +1,7 @@
+ """Test the sphinx.environment.adapters.toctree."""
+ 
++from __future__ import annotations
++
+ import pytest
+ from docutils import nodes
+ from docutils.nodes import bullet_list, list_item, literal, reference, title
+diff --git a/tests/test_errors.py b/tests/test_errors.py
+index d551a6ef1e8..e1ef0d389ae 100644
+--- a/tests/test_errors.py
++++ b/tests/test_errors.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ from sphinx.errors import ExtensionError
+ 
+ 
+diff --git a/tests/test_events.py b/tests/test_events.py
+index df175787a17..349b3dde572 100644
+--- a/tests/test_events.py
++++ b/tests/test_events.py
+@@ -1,5 +1,7 @@
+ """Test the EventManager class."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.errors import ExtensionError
+diff --git a/tests/test_extensions/ext_napoleon_pep526_data_google.py b/tests/test_extensions/ext_napoleon_pep526_data_google.py
+index d0692e0bab1..f42dfcfc442 100644
+--- a/tests/test_extensions/ext_napoleon_pep526_data_google.py
++++ b/tests/test_extensions/ext_napoleon_pep526_data_google.py
+@@ -1,5 +1,7 @@
+ """Test module for napoleon PEP 526 compatibility with google style"""
+ 
++from __future__ import annotations
++
+ module_level_var: int = 99
+ """This is an example module level variable"""
+ 
+diff --git a/tests/test_extensions/ext_napoleon_pep526_data_numpy.py b/tests/test_extensions/ext_napoleon_pep526_data_numpy.py
+index eff7746ebf2..0681a334a1e 100644
+--- a/tests/test_extensions/ext_napoleon_pep526_data_numpy.py
++++ b/tests/test_extensions/ext_napoleon_pep526_data_numpy.py
+@@ -1,5 +1,7 @@
+ """Test module for napoleon PEP 526 compatibility with numpy style"""
+ 
++from __future__ import annotations
++
+ module_level_var: int = 99
+ """This is an example module level variable"""
+ 
+diff --git a/tests/test_extensions/test_ext_apidoc.py b/tests/test_extensions/test_ext_apidoc.py
+index 515aff9e930..1e191de9a7b 100644
+--- a/tests/test_extensions/test_ext_apidoc.py
++++ b/tests/test_extensions/test_ext_apidoc.py
+@@ -1,13 +1,18 @@
+ """Test the sphinx.apidoc module."""
+ 
++from __future__ import annotations
++
+ from collections import namedtuple
+-from pathlib import Path
++from typing import TYPE_CHECKING
+ 
+ import pytest
+ 
+ import sphinx.ext.apidoc
+ from sphinx.ext.apidoc import main as apidoc_main
+ 
++if TYPE_CHECKING:
++    from pathlib import Path
++
+ _apidoc = namedtuple('_apidoc', 'coderoot,outdir')  # NoQA: PYI024
+ 
+ 
+diff --git a/tests/test_extensions/test_ext_autodoc_autoattribute.py b/tests/test_extensions/test_ext_autodoc_autoattribute.py
+index 41fcc99011b..51358302a6e 100644
+--- a/tests/test_extensions/test_ext_autodoc_autoattribute.py
++++ b/tests/test_extensions/test_ext_autodoc_autoattribute.py
+@@ -4,6 +4,8 @@
+ source file translated by test_build.
+ """
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from tests.test_extensions.autodoc_util import do_autodoc
+diff --git a/tests/test_extensions/test_ext_autodoc_autodata.py b/tests/test_extensions/test_ext_autodoc_autodata.py
+index b794666e97e..796e29e1d45 100644
+--- a/tests/test_extensions/test_ext_autodoc_autodata.py
++++ b/tests/test_extensions/test_ext_autodoc_autodata.py
+@@ -4,6 +4,8 @@
+ source file translated by test_build.
+ """
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from tests.test_extensions.autodoc_util import do_autodoc
+diff --git a/tests/test_extensions/test_ext_autodoc_autofunction.py b/tests/test_extensions/test_ext_autodoc_autofunction.py
+index e70069bfd61..a3cb5d747d4 100644
+--- a/tests/test_extensions/test_ext_autodoc_autofunction.py
++++ b/tests/test_extensions/test_ext_autodoc_autofunction.py
+@@ -4,6 +4,8 @@
+ source file translated by test_build.
+ """
+ 
++from __future__ import annotations
++
+ from typing import Any
+ 
+ import pytest
+diff --git a/tests/test_extensions/test_ext_autodoc_automodule.py b/tests/test_extensions/test_ext_autodoc_automodule.py
+index 2f502f12336..c9503a765c3 100644
+--- a/tests/test_extensions/test_ext_autodoc_automodule.py
++++ b/tests/test_extensions/test_ext_autodoc_automodule.py
+@@ -4,6 +4,8 @@
+ source file translated by test_build.
+ """
+ 
++from __future__ import annotations
++
+ import inspect
+ import sys
+ import typing
+diff --git a/tests/test_extensions/test_ext_autodoc_autoproperty.py b/tests/test_extensions/test_ext_autodoc_autoproperty.py
+index 9c9178d3b01..b6d2125e25f 100644
+--- a/tests/test_extensions/test_ext_autodoc_autoproperty.py
++++ b/tests/test_extensions/test_ext_autodoc_autoproperty.py
+@@ -4,6 +4,8 @@
+ source file translated by test_build.
+ """
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from tests.test_extensions.autodoc_util import do_autodoc
+diff --git a/tests/test_extensions/test_ext_autodoc_configs.py b/tests/test_extensions/test_ext_autodoc_configs.py
+index c3911b8533c..155cbc36347 100644
+--- a/tests/test_extensions/test_ext_autodoc_configs.py
++++ b/tests/test_extensions/test_ext_autodoc_configs.py
+@@ -1,10 +1,11 @@
+ """Test the autodoc extension.  This tests mainly for config variables"""
+ 
++from __future__ import annotations
++
+ import platform
+ import sys
+-from collections.abc import Iterator
+ from contextlib import contextmanager
+-from pathlib import Path
++from typing import TYPE_CHECKING
+ 
+ import pytest
+ 
+@@ -12,6 +13,10 @@
+ 
+ from tests.test_extensions.autodoc_util import do_autodoc
+ 
++if TYPE_CHECKING:
++    from collections.abc import Iterator
++    from pathlib import Path
++
+ skip_py314_segfault = pytest.mark.skipif(
+     sys.version_info[:2] >= (3, 14),
+     reason='Segmentation fault: https://github.com/python/cpython/issues/125017',
+diff --git a/tests/test_extensions/test_ext_autodoc_events.py b/tests/test_extensions/test_ext_autodoc_events.py
+index 8ff8630ad7e..d7139e88019 100644
+--- a/tests/test_extensions/test_ext_autodoc_events.py
++++ b/tests/test_extensions/test_ext_autodoc_events.py
+@@ -1,5 +1,7 @@
+ """Test the autodoc extension.  This tests mainly for autodoc events"""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.ext.autodoc import between, cut_lines
+diff --git a/tests/test_extensions/test_ext_autodoc_preserve_defaults.py b/tests/test_extensions/test_ext_autodoc_preserve_defaults.py
+index 1f8b5554c6e..b7b4fcf7027 100644
+--- a/tests/test_extensions/test_ext_autodoc_preserve_defaults.py
++++ b/tests/test_extensions/test_ext_autodoc_preserve_defaults.py
+@@ -1,5 +1,7 @@
+ """Test the autodoc extension."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from tests.test_extensions.autodoc_util import do_autodoc
+diff --git a/tests/test_extensions/test_ext_autodoc_private_members.py b/tests/test_extensions/test_ext_autodoc_private_members.py
+index 2915c74d7af..d5f8df9f03d 100644
+--- a/tests/test_extensions/test_ext_autodoc_private_members.py
++++ b/tests/test_extensions/test_ext_autodoc_private_members.py
+@@ -1,5 +1,7 @@
+ """Test the autodoc extension.  This tests mainly for private-members option."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from tests.test_extensions.autodoc_util import do_autodoc
+diff --git a/tests/test_extensions/test_ext_autosectionlabel.py b/tests/test_extensions/test_ext_autosectionlabel.py
+index 2133f64bfaf..7c8dad56036 100644
+--- a/tests/test_extensions/test_ext_autosectionlabel.py
++++ b/tests/test_extensions/test_ext_autosectionlabel.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.ext.autosectionlabel extension."""
+ 
++from __future__ import annotations
++
+ import re
+ 
+ import pytest
+diff --git a/tests/test_extensions/test_ext_autosummary.py b/tests/test_extensions/test_ext_autosummary.py
+index 5a96afdd3e3..175abc4e21c 100644
+--- a/tests/test_extensions/test_ext_autosummary.py
++++ b/tests/test_extensions/test_ext_autosummary.py
+@@ -1,10 +1,12 @@
+ """Test the autosummary extension."""
+ 
++from __future__ import annotations
++
+ import sys
+ from contextlib import chdir
+ from io import StringIO
++from typing import TYPE_CHECKING
+ from unittest.mock import Mock, patch
+-from xml.etree.ElementTree import Element
+ 
+ import pytest
+ from docutils import nodes
+@@ -26,6 +28,9 @@
+ from sphinx.testing.util import assert_node, etree_parse
+ from sphinx.util.docutils import new_document
+ 
++if TYPE_CHECKING:
++    from xml.etree.ElementTree import Element
++
+ html_warnfile = StringIO()
+ 
+ 
+diff --git a/tests/test_extensions/test_ext_autosummary_imports.py b/tests/test_extensions/test_ext_autosummary_imports.py
+index 12a0d4624b0..7abee757e3c 100644
+--- a/tests/test_extensions/test_ext_autosummary_imports.py
++++ b/tests/test_extensions/test_ext_autosummary_imports.py
+@@ -1,5 +1,7 @@
+ """Test autosummary for import cycles."""
+ 
++from __future__ import annotations
++
+ import pytest
+ from docutils import nodes
+ 
+diff --git a/tests/test_extensions/test_ext_coverage.py b/tests/test_extensions/test_ext_coverage.py
+index 563fd7eb61b..f788314af91 100644
+--- a/tests/test_extensions/test_ext_coverage.py
++++ b/tests/test_extensions/test_ext_coverage.py
+@@ -1,5 +1,7 @@
+ """Test the coverage builder."""
+ 
++from __future__ import annotations
++
+ import pickle
+ 
+ import pytest
+diff --git a/tests/test_extensions/test_ext_doctest.py b/tests/test_extensions/test_ext_doctest.py
+index 0f141f276d2..fc86ee47f5d 100644
+--- a/tests/test_extensions/test_ext_doctest.py
++++ b/tests/test_extensions/test_ext_doctest.py
+@@ -1,5 +1,7 @@
+ """Test the doctest extension."""
+ 
++from __future__ import annotations
++
+ import os
+ from collections import Counter
+ 
+diff --git a/tests/test_extensions/test_ext_duration.py b/tests/test_extensions/test_ext_duration.py
+index 535786de892..c8984de02e3 100644
+--- a/tests/test_extensions/test_ext_duration.py
++++ b/tests/test_extensions/test_ext_duration.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.ext.duration extension."""
+ 
++from __future__ import annotations
++
+ import re
+ 
+ import pytest
+diff --git a/tests/test_extensions/test_ext_extlinks.py b/tests/test_extensions/test_ext_extlinks.py
+index 38614329802..55b80e84e4d 100644
+--- a/tests/test_extensions/test_ext_extlinks.py
++++ b/tests/test_extensions/test_ext_extlinks.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import pytest
+ 
+ 
+diff --git a/tests/test_extensions/test_ext_githubpages.py b/tests/test_extensions/test_ext_githubpages.py
+index 156b9a3916a..ddf54d96e6f 100644
+--- a/tests/test_extensions/test_ext_githubpages.py
++++ b/tests/test_extensions/test_ext_githubpages.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.ext.githubpages extension."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ 
+diff --git a/tests/test_extensions/test_ext_graphviz.py b/tests/test_extensions/test_ext_graphviz.py
+index 4be01caf023..b4e0a167316 100644
+--- a/tests/test_extensions/test_ext_graphviz.py
++++ b/tests/test_extensions/test_ext_graphviz.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.ext.graphviz extension."""
+ 
++from __future__ import annotations
++
+ import re
+ import sys
+ 
+diff --git a/tests/test_extensions/test_ext_ifconfig.py b/tests/test_extensions/test_ext_ifconfig.py
+index 318c56a5741..7c07405b2f8 100644
+--- a/tests/test_extensions/test_ext_ifconfig.py
++++ b/tests/test_extensions/test_ext_ifconfig.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.ext.ifconfig extension."""
+ 
++from __future__ import annotations
++
+ import docutils.utils
+ import pytest
+ 
+diff --git a/tests/test_extensions/test_ext_imgconverter.py b/tests/test_extensions/test_ext_imgconverter.py
+index a37c98c172d..b44fd5782a2 100644
+--- a/tests/test_extensions/test_ext_imgconverter.py
++++ b/tests/test_extensions/test_ext_imgconverter.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.ext.imgconverter extension."""
+ 
++from __future__ import annotations
++
+ import subprocess
+ 
+ import pytest
+diff --git a/tests/test_extensions/test_ext_imgmockconverter.py b/tests/test_extensions/test_ext_imgmockconverter.py
+index fc34c24c65e..7d10a522e93 100644
+--- a/tests/test_extensions/test_ext_imgmockconverter.py
++++ b/tests/test_extensions/test_ext_imgmockconverter.py
+@@ -1,5 +1,7 @@
+ """Test image converter with identical basenames"""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ 
+diff --git a/tests/test_extensions/test_ext_inheritance_diagram.py b/tests/test_extensions/test_ext_inheritance_diagram.py
+index 2aa4ff99188..c43aa2e28ee 100644
+--- a/tests/test_extensions/test_ext_inheritance_diagram.py
++++ b/tests/test_extensions/test_ext_inheritance_diagram.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.ext.inheritance_diagram extension."""
+ 
++from __future__ import annotations
++
+ import re
+ import sys
+ import zlib
+diff --git a/tests/test_extensions/test_ext_math.py b/tests/test_extensions/test_ext_math.py
+index 5a866520afb..e0445318840 100644
+--- a/tests/test_extensions/test_ext_math.py
++++ b/tests/test_extensions/test_ext_math.py
+@@ -1,5 +1,7 @@
+ """Test math extensions."""
+ 
++from __future__ import annotations
++
+ import re
+ import shutil
+ import subprocess
+diff --git a/tests/test_extensions/test_ext_napoleon.py b/tests/test_extensions/test_ext_napoleon.py
+index 306ab057b0d..1d495add7b0 100644
+--- a/tests/test_extensions/test_ext_napoleon.py
++++ b/tests/test_extensions/test_ext_napoleon.py
+@@ -1,5 +1,7 @@
+ """Tests for :mod:`sphinx.ext.napoleon.__init__` module."""
+ 
++from __future__ import annotations
++
+ import functools
+ from collections import namedtuple
+ from unittest import mock
+diff --git a/tests/test_extensions/test_ext_napoleon_docstring.py b/tests/test_extensions/test_ext_napoleon_docstring.py
+index 1e0cf3ae023..cf78e98f6ab 100644
+--- a/tests/test_extensions/test_ext_napoleon_docstring.py
++++ b/tests/test_extensions/test_ext_napoleon_docstring.py
+@@ -1,5 +1,7 @@
+ """Tests for :mod:`sphinx.ext.napoleon.docstring` module."""
+ 
++from __future__ import annotations
++
+ import re
+ import zlib
+ from collections import namedtuple
+diff --git a/tests/test_extensions/test_ext_todo.py b/tests/test_extensions/test_ext_todo.py
+index ed7f8d60963..626afe1120b 100644
+--- a/tests/test_extensions/test_ext_todo.py
++++ b/tests/test_extensions/test_ext_todo.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.ext.todo extension."""
+ 
++from __future__ import annotations
++
+ import re
+ 
+ import pytest
+diff --git a/tests/test_extensions/test_extension.py b/tests/test_extensions/test_extension.py
+index a84ca30b81f..7c44360ae26 100644
+--- a/tests/test_extensions/test_extension.py
++++ b/tests/test_extensions/test_extension.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.extension module."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.errors import VersionRequirementError
+diff --git a/tests/test_highlighting.py b/tests/test_highlighting.py
+index 430d569c0e6..c32c1887ebe 100644
+--- a/tests/test_highlighting.py
++++ b/tests/test_highlighting.py
+@@ -1,5 +1,7 @@
+ """Test the Pygments highlighting bridge."""
+ 
++from __future__ import annotations
++
+ from unittest import mock
+ 
+ import pygments
+diff --git a/tests/test_intl/test_catalogs.py b/tests/test_intl/test_catalogs.py
+index 5e28df680ec..1a6f3f425df 100644
+--- a/tests/test_intl/test_catalogs.py
++++ b/tests/test_intl/test_catalogs.py
+@@ -1,5 +1,7 @@
+ """Test the base build process."""
+ 
++from __future__ import annotations
++
+ import shutil
+ from pathlib import Path
+ 
+diff --git a/tests/test_intl/test_intl.py b/tests/test_intl/test_intl.py
+index 19808f6d538..ab104b55600 100644
+--- a/tests/test_intl/test_intl.py
++++ b/tests/test_intl/test_intl.py
+@@ -3,11 +3,13 @@
+ Runs the text builder in the test root.
+ """
+ 
++from __future__ import annotations
++
+ import os
+ import re
+ import shutil
+ import time
+-from io import StringIO
++from typing import TYPE_CHECKING
+ 
+ import pytest
+ from babel.messages import mofile, pofile
+@@ -19,6 +21,9 @@
+ from sphinx.util.console import strip_colors
+ from sphinx.util.nodes import NodeMatcher
+ 
++if TYPE_CHECKING:
++    from io import StringIO
++
+ _CATALOG_LOCALE = 'xx'
+ 
+ sphinx_intl = pytest.mark.sphinx(
+diff --git a/tests/test_markup/test_markup.py b/tests/test_markup/test_markup.py
+index 9eb0b83fa89..fa99fa352dd 100644
+--- a/tests/test_markup/test_markup.py
++++ b/tests/test_markup/test_markup.py
+@@ -1,5 +1,7 @@
+ """Test various Sphinx-specific markup extensions."""
+ 
++from __future__ import annotations
++
+ import re
+ import warnings
+ from types import SimpleNamespace
+diff --git a/tests/test_markup/test_metadata.py b/tests/test_markup/test_metadata.py
+index b3fe3e678ee..c84dc43081e 100644
+--- a/tests/test_markup/test_metadata.py
++++ b/tests/test_markup/test_metadata.py
+@@ -2,6 +2,7 @@
+ 
+ # adapted from an example of bibliographic metadata at
+ # https://docutils.sourceforge.io/docs/user/rst/demo.txt
++from __future__ import annotations
+ 
+ import pytest
+ 
+diff --git a/tests/test_markup/test_parser.py b/tests/test_markup/test_parser.py
+index a047923c720..3f40a21693a 100644
+--- a/tests/test_markup/test_parser.py
++++ b/tests/test_markup/test_parser.py
+@@ -1,5 +1,7 @@
+ """Tests parsers module."""
+ 
++from __future__ import annotations
++
+ from unittest.mock import Mock, patch
+ 
+ import pytest
+diff --git a/tests/test_markup/test_smartquotes.py b/tests/test_markup/test_smartquotes.py
+index b57a8a81017..2f34f9f1a21 100644
+--- a/tests/test_markup/test_smartquotes.py
++++ b/tests/test_markup/test_smartquotes.py
+@@ -1,5 +1,7 @@
+ """Test smart quotes."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.testing.util import etree_parse
+diff --git a/tests/test_project.py b/tests/test_project.py
+index aa8b04b1f06..0a7688b2cfe 100644
+--- a/tests/test_project.py
++++ b/tests/test_project.py
+@@ -1,5 +1,7 @@
+ """Tests project module."""
+ 
++from __future__ import annotations
++
+ from pathlib import Path
+ 
+ import pytest
+diff --git a/tests/test_pycode/test_pycode.py b/tests/test_pycode/test_pycode.py
+index 3a34d6f3a0f..cc08ff62c11 100644
+--- a/tests/test_pycode/test_pycode.py
++++ b/tests/test_pycode/test_pycode.py
+@@ -1,5 +1,7 @@
+ """Test pycode."""
+ 
++from __future__ import annotations
++
+ import sys
+ from pathlib import Path
+ 
+diff --git a/tests/test_pycode/test_pycode_ast.py b/tests/test_pycode/test_pycode_ast.py
+index c62600a82dc..bc734e737dc 100644
+--- a/tests/test_pycode/test_pycode_ast.py
++++ b/tests/test_pycode/test_pycode_ast.py
+@@ -1,5 +1,7 @@
+ """Test pycode.ast"""
+ 
++from __future__ import annotations
++
+ import ast
+ 
+ import pytest
+diff --git a/tests/test_pycode/test_pycode_parser.py b/tests/test_pycode/test_pycode_parser.py
+index 7883a8de3cf..813aa3a413e 100644
+--- a/tests/test_pycode/test_pycode_parser.py
++++ b/tests/test_pycode/test_pycode_parser.py
+@@ -1,5 +1,7 @@
+ """Test pycode.parser."""
+ 
++from __future__ import annotations
++
+ from sphinx.pycode.parser import Parser
+ from sphinx.util.inspect import signature_from_str
+ 
+diff --git a/tests/test_quickstart.py b/tests/test_quickstart.py
+index 07a61689575..d0db756db21 100644
+--- a/tests/test_quickstart.py
++++ b/tests/test_quickstart.py
+@@ -1,10 +1,10 @@
+ """Test the sphinx.quickstart module."""
+ 
++from __future__ import annotations
++
+ import time
+-from collections.abc import Callable
+ from io import StringIO
+-from pathlib import Path
+-from typing import Any
++from typing import TYPE_CHECKING, Any
+ 
+ import pytest
+ 
+@@ -12,6 +12,10 @@
+ from sphinx.testing.util import SphinxTestApp
+ from sphinx.util.console import coloron, nocolor
+ 
++if TYPE_CHECKING:
++    from collections.abc import Callable
++    from pathlib import Path
++
+ warnfile = StringIO()
+ 
+ 
+diff --git a/tests/test_roles.py b/tests/test_roles.py
+index 127f671a145..11b0a13cf4c 100644
+--- a/tests/test_roles.py
++++ b/tests/test_roles.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.roles"""
+ 
++from __future__ import annotations
++
+ from unittest.mock import Mock
+ 
+ import pytest
+diff --git a/tests/test_theming/test_html_theme.py b/tests/test_theming/test_html_theme.py
+index bdfca9886d8..7f2d34a93e6 100644
+--- a/tests/test_theming/test_html_theme.py
++++ b/tests/test_theming/test_html_theme.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import pytest
+ 
+ 
+diff --git a/tests/test_theming/test_templating.py b/tests/test_theming/test_templating.py
+index 6eb2fdffa78..c508716b7c7 100644
+--- a/tests/test_theming/test_templating.py
++++ b/tests/test_theming/test_templating.py
+@@ -1,5 +1,7 @@
+ """Test templating."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.ext.autosummary.generate import setup_documenters
+diff --git a/tests/test_theming/test_theming.py b/tests/test_theming/test_theming.py
+index afd15f838b4..bf3025473d0 100644
+--- a/tests/test_theming/test_theming.py
++++ b/tests/test_theming/test_theming.py
+@@ -1,5 +1,7 @@
+ """Test the Theme class."""
+ 
++from __future__ import annotations
++
+ import shutil
+ from pathlib import Path
+ from xml.etree.ElementTree import ParseError
+diff --git a/tests/test_transforms/test_transforms_move_module_targets.py b/tests/test_transforms/test_transforms_move_module_targets.py
+index df72d9c33a5..f64b7d6a500 100644
+--- a/tests/test_transforms/test_transforms_move_module_targets.py
++++ b/tests/test_transforms/test_transforms_move_module_targets.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import pytest
+ from docutils import nodes
+ 
+diff --git a/tests/test_transforms/test_transforms_post_transforms_code.py b/tests/test_transforms/test_transforms_post_transforms_code.py
+index 57e9bb054cc..a4243fb85bc 100644
+--- a/tests/test_transforms/test_transforms_post_transforms_code.py
++++ b/tests/test_transforms/test_transforms_post_transforms_code.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import pytest
+ 
+ 
+diff --git a/tests/test_transforms/test_transforms_post_transforms_images.py b/tests/test_transforms/test_transforms_post_transforms_images.py
+index bb5d076f071..800fb3b986b 100644
+--- a/tests/test_transforms/test_transforms_post_transforms_images.py
++++ b/tests/test_transforms/test_transforms_post_transforms_images.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ from types import SimpleNamespace
+ 
+ from docutils import nodes
+diff --git a/tests/test_transforms/test_transforms_reorder_nodes.py b/tests/test_transforms/test_transforms_reorder_nodes.py
+index 22fdcf742cf..6afa6ab5b9c 100644
+--- a/tests/test_transforms/test_transforms_reorder_nodes.py
++++ b/tests/test_transforms/test_transforms_reorder_nodes.py
+@@ -1,5 +1,7 @@
+ """Tests the transformations"""
+ 
++from __future__ import annotations
++
+ import pytest
+ from docutils import nodes
+ 
+diff --git a/tests/test_transforms/test_unreferenced_footnotes.py b/tests/test_transforms/test_unreferenced_footnotes.py
+index b1cf08f783a..ac1b8b15dbd 100644
+--- a/tests/test_transforms/test_unreferenced_footnotes.py
++++ b/tests/test_transforms/test_unreferenced_footnotes.py
+@@ -1,10 +1,16 @@
+ """Test the ``UnreferencedFootnotesDetector`` transform."""
+ 
+-from pathlib import Path
++from __future__ import annotations
++
++from typing import TYPE_CHECKING
+ 
+-from sphinx.testing.util import SphinxTestApp
+ from sphinx.util.console import strip_colors
+ 
++if TYPE_CHECKING:
++    from pathlib import Path
++
++    from sphinx.testing.util import SphinxTestApp
++
+ 
+ def test_warnings(make_app: type[SphinxTestApp], tmp_path: Path) -> None:
+     """Test that warnings are emitted for unreferenced footnotes."""
+diff --git a/tests/test_util/test_util.py b/tests/test_util/test_util.py
+index b04c30e7aa8..2584206eb1b 100644
+--- a/tests/test_util/test_util.py
++++ b/tests/test_util/test_util.py
+@@ -1,5 +1,7 @@
+ """Tests util functions."""
+ 
++from __future__ import annotations
++
+ from sphinx.util.osutil import ensuredir
+ 
+ 
+diff --git a/tests/test_util/test_util_display.py b/tests/test_util/test_util_display.py
+index afad5a34d90..7bd70f89cd3 100644
+--- a/tests/test_util/test_util_display.py
++++ b/tests/test_util/test_util_display.py
+@@ -1,5 +1,7 @@
+ """Tests util functions."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.util import logging
+diff --git a/tests/test_util/test_util_docstrings.py b/tests/test_util/test_util_docstrings.py
+index 6d416a0754e..9fde0cb14eb 100644
+--- a/tests/test_util/test_util_docstrings.py
++++ b/tests/test_util/test_util_docstrings.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.util.docstrings."""
+ 
++from __future__ import annotations
++
+ from sphinx.util.docstrings import (
+     prepare_commentdoc,
+     prepare_docstring,
+diff --git a/tests/test_util/test_util_fileutil.py b/tests/test_util/test_util_fileutil.py
+index 7ffa83fc223..ebe252f6264 100644
+--- a/tests/test_util/test_util_fileutil.py
++++ b/tests/test_util/test_util_fileutil.py
+@@ -1,5 +1,7 @@
+ """Tests sphinx.util.fileutil functions."""
+ 
++from __future__ import annotations
++
+ import re
+ from unittest import mock
+ 
+diff --git a/tests/test_util/test_util_i18n.py b/tests/test_util/test_util_i18n.py
+index 95d0909f90a..b6e865c331d 100644
+--- a/tests/test_util/test_util_i18n.py
++++ b/tests/test_util/test_util_i18n.py
+@@ -1,5 +1,7 @@
+ """Test i18n util."""
+ 
++from __future__ import annotations
++
+ import datetime
+ import os
+ import time
+diff --git a/tests/test_util/test_util_images.py b/tests/test_util/test_util_images.py
+index afc8587fa30..006d28003ce 100644
+--- a/tests/test_util/test_util_images.py
++++ b/tests/test_util/test_util_images.py
+@@ -1,5 +1,7 @@
+ """Test images util."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.util.images import (
+diff --git a/tests/test_util/test_util_importer.py b/tests/test_util/test_util_importer.py
+index 57fd6e46fb6..af0503c6899 100644
+--- a/tests/test_util/test_util_importer.py
++++ b/tests/test_util/test_util_importer.py
+@@ -1,5 +1,7 @@
+ """Test sphinx.util._importer."""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.errors import ExtensionError
+diff --git a/tests/test_util/test_util_lines.py b/tests/test_util/test_util_lines.py
+index a4ab41641de..5c9db412d88 100644
+--- a/tests/test_util/test_util_lines.py
++++ b/tests/test_util/test_util_lines.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.util._lines import parse_line_num_spec
+diff --git a/tests/test_util/test_util_logging.py b/tests/test_util/test_util_logging.py
+index 5a9e0be5ada..aa0fc86be59 100644
+--- a/tests/test_util/test_util_logging.py
++++ b/tests/test_util/test_util_logging.py
+@@ -1,5 +1,7 @@
+ """Test logging util."""
+ 
++from __future__ import annotations
++
+ import codecs
+ import os
+ from pathlib import Path
+diff --git a/tests/test_util/test_util_matching.py b/tests/test_util/test_util_matching.py
+index 01fb9fde2e1..9a51123ceff 100644
+--- a/tests/test_util/test_util_matching.py
++++ b/tests/test_util/test_util_matching.py
+@@ -1,5 +1,7 @@
+ """Tests sphinx.util.matching functions."""
+ 
++from __future__ import annotations
++
+ from sphinx.util.matching import Matcher, compile_matchers, get_matching_files
+ 
+ 
+diff --git a/tests/test_util/test_util_rst.py b/tests/test_util/test_util_rst.py
+index d6e83433af3..4d8d0e09482 100644
+--- a/tests/test_util/test_util_rst.py
++++ b/tests/test_util/test_util_rst.py
+@@ -1,5 +1,7 @@
+ """Tests sphinx.util.rst functions."""
+ 
++from __future__ import annotations
++
+ from docutils.statemachine import StringList
+ from jinja2 import Environment
+ 
+diff --git a/tests/test_util/test_util_template.py b/tests/test_util/test_util_template.py
+index 51bb225b2c4..19e8b961ccf 100644
+--- a/tests/test_util/test_util_template.py
++++ b/tests/test_util/test_util_template.py
+@@ -1,5 +1,7 @@
+ """Tests sphinx.util.template functions."""
+ 
++from __future__ import annotations
++
+ from sphinx.util.template import ReSTRenderer
+ 
+ 
+diff --git a/tests/test_util/test_util_typing.py b/tests/test_util/test_util_typing.py
+index 314639efbe7..aabf84a61be 100644
+--- a/tests/test_util/test_util_typing.py
++++ b/tests/test_util/test_util_typing.py
+@@ -1,5 +1,7 @@
+ """Tests util.typing functions."""
+ 
++from __future__ import annotations
++
+ import dataclasses
+ import sys
+ import typing as t
+diff --git a/tests/test_util/test_util_uri.py b/tests/test_util/test_util_uri.py
+index 43ee1b34e48..fdcb3c2ca8e 100644
+--- a/tests/test_util/test_util_uri.py
++++ b/tests/test_util/test_util_uri.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ from sphinx.util._uri import encode_uri
+ 
+ 
+diff --git a/tests/test_versioning.py b/tests/test_versioning.py
+index 14e7520db49..795868ba84f 100644
+--- a/tests/test_versioning.py
++++ b/tests/test_versioning.py
+@@ -1,5 +1,7 @@
+ """Test the versioning implementation."""
+ 
++from __future__ import annotations
++
+ import pickle
+ import shutil
+ 
+diff --git a/tests/test_writers/test_api_translator.py b/tests/test_writers/test_api_translator.py
+index bdbea0dc578..cd34aba058a 100644
+--- a/tests/test_writers/test_api_translator.py
++++ b/tests/test_writers/test_api_translator.py
+@@ -1,5 +1,7 @@
+ """Test the Sphinx API for translator."""
+ 
++from __future__ import annotations
++
+ import sys
+ 
+ import pytest
+diff --git a/tests/test_writers/test_docutilsconf.py b/tests/test_writers/test_docutilsconf.py
+index cd74b5bef95..4201c9df831 100644
+--- a/tests/test_writers/test_docutilsconf.py
++++ b/tests/test_writers/test_docutilsconf.py
+@@ -1,5 +1,7 @@
+ """Test docutils.conf support for several writers."""
+ 
++from __future__ import annotations
++
+ import pytest
+ from docutils import nodes
+ 
+diff --git a/tests/test_writers/test_writer_latex.py b/tests/test_writers/test_writer_latex.py
+index a0ab3ee5915..55130c44d52 100644
+--- a/tests/test_writers/test_writer_latex.py
++++ b/tests/test_writers/test_writer_latex.py
+@@ -1,5 +1,7 @@
+ """Test the LaTeX writer"""
+ 
++from __future__ import annotations
++
+ import pytest
+ 
+ from sphinx.writers.latex import rstdim_to_latexdim
+diff --git a/utils/babel_runner.py b/utils/babel_runner.py
+index 8c27f20e3e8..c3a2d030a35 100644
+--- a/utils/babel_runner.py
++++ b/utils/babel_runner.py
+@@ -13,6 +13,8 @@
+     Compile the ".po" catalogue files to ".mo" and ".js" files.
+ """
+ 
++from __future__ import annotations
++
+ import json
+ import logging
+ import sys
+diff --git a/utils/bump_docker.py b/utils/bump_docker.py
+index 570e5ecab49..c36d8a88369 100755
+--- a/utils/bump_docker.py
++++ b/utils/bump_docker.py
+@@ -2,6 +2,8 @@
+ 
+ """Usage: bump_docker.py [VERSION]"""
+ 
++from __future__ import annotations
++
+ import re
+ import subprocess
+ import sys
+diff --git a/utils/convert_attestations.py b/utils/convert_attestations.py
+index d359c1593b3..b8bd19a4a02 100644
+--- a/utils/convert_attestations.py
++++ b/utils/convert_attestations.py
+@@ -3,6 +3,8 @@
+ See https://github.com/trailofbits/pypi-attestations.
+ """
+ 
++from __future__ import annotations
++
+ import json
+ import sys
+ from base64 import b64decode
+diff --git a/utils/generate_js_fixtures.py b/utils/generate_js_fixtures.py
+index 4e126899026..ecf13a94741 100755
+--- a/utils/generate_js_fixtures.py
++++ b/utils/generate_js_fixtures.py
+@@ -1,4 +1,5 @@
+ #!/usr/bin/env python3
++from __future__ import annotations
+ 
+ import shutil
+ import subprocess

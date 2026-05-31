@@ -1,0 +1,13 @@
+diff --git a/doc/usage/configuration.rst b/doc/usage/configuration.rst
+index 40fe5931250..6b1673c97a3 100644
+--- a/doc/usage/configuration.rst
++++ b/doc/usage/configuration.rst
+@@ -3701,6 +3701,8 @@ and which failures and redirects it ignores.
+    A list of regular expressions that match URIs that should not be checked
+    when doing a ``linkcheck`` build.
+ 
++   Server-issued redirects that match ignored URIs will not be followed.
++
+    Example:
+ 
+    .. code-block:: python

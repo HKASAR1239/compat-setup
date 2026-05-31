@@ -1,0 +1,946 @@
+diff --git a/.pre-commit-config.yaml b/.pre-commit-config.yaml
+index 97e728143b..060cfc3012 100644
+--- a/.pre-commit-config.yaml
++++ b/.pre-commit-config.yaml
+@@ -14,11 +14,6 @@ repos:
+     hooks:
+       - id: codespell
+         additional_dependencies: ["tomli>=2.0.1"]
+-  - repo: https://github.com/tox-dev/tox-ini-fmt
+-    rev: "1.4.1"
+-    hooks:
+-      - id: tox-ini-fmt
+-        args: ["-p", "fix"]
+   - repo: https://github.com/tox-dev/pyproject-fmt
+     rev: "2.2.4"
+     hooks:
+diff --git a/docs/changelog/3386.bugfix.rst b/docs/changelog/3386.bugfix.rst
+new file mode 100644
+index 0000000000..7b8ed607a2
+--- /dev/null
++++ b/docs/changelog/3386.bugfix.rst
+@@ -0,0 +1 @@
++Fix error when using ``requires`` within a TOML configuration file - by :user:`gaborbernat`.
+diff --git a/docs/changelog/3387.bugfix.rst b/docs/changelog/3387.bugfix.rst
+new file mode 100644
+index 0000000000..3c6f70bc8f
+--- /dev/null
++++ b/docs/changelog/3387.bugfix.rst
+@@ -0,0 +1 @@
++Fix error when using ``deps`` within a TOML configuration file - by :user:`gaborbernat`.
+diff --git a/docs/changelog/3388.bugfix.rst b/docs/changelog/3388.bugfix.rst
+new file mode 100644
+index 0000000000..985bb05abc
+--- /dev/null
++++ b/docs/changelog/3388.bugfix.rst
+@@ -0,0 +1,7 @@
++Multiple fixes for the TOML configuration by :user:`gaborbernat`.:
++
++- Do not fail when there is an empty command within ``commands``.
++- Allow references for ``set_env`` by accepting list of dictionaries for it.
++- Do not try to be smart about reference unrolling, instead allow the user to control it via the ``extend`` flag,
++  available both for ``posargs`` and ``ref`` replacements.
++- The ``ref`` replacements ``raw`` key has been renamed to ``of``.
+diff --git a/docs/config.rst b/docs/config.rst
+index 33c3698dc4..3c8083f98a 100644
+--- a/docs/config.rst
++++ b/docs/config.rst
+@@ -1296,6 +1296,39 @@ others to avoid repeating the same values:
+ If the target table is one of the tox environments variable substitution will be applied on the replaced value,
+ otherwise the text will be inserted as is (e.g., here with extra).
+ 
++Configuration reference
++~~~~~~~~~~~~~~~~~~~~~~~
++.. versionadded:: 4.21
++
++You can reference other configurations via the ``ref`` replacement. This can either be of type:
++
++
++- ``env``, in this case the configuration is loaded from another tox environment, where string substitution will happen
++  in that environments scope:
++
++    .. code-block:: toml
++
++        [env.src]
++        extras = ["A", "{env_name}"]
++        [env.dest]
++        extras = [{ replace = "ref", env = "src", key = "extras", extend = true }, "B"
++
++  In this case ``dest`` environments ``extras`` will be ``A``, ``src``, ``B``.
++
++- ``raw``, in this case the configuration is loaded as raw, and substitution executed in the current environments scope:
++
++    .. code-block:: toml
++
++        [env.src]
++        extras = ["A", "{env_name}"]
++        [env.dest]
++        extras = [{ replace = "ref", of = ["env", "extras"], extend = true }, "B"]
++
++  In this case ``dest`` environments ``extras`` will be ``A``, ``dest``, ``B``.
++
++The ``extend`` flag controls if after replacement the value should be replaced as is in the host structure (when flag is
++false -- by default) or be extended into. This flag only operates when the host is a list.
++
+ Positional argument reference
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ .. versionadded:: 4.21
+@@ -1305,9 +1338,12 @@ You can reference positional arguments via the ``posargs`` replacement:
+ .. code-block:: toml
+ 
+     [env.A]
+-    commands = [["python", { replace = "posargs", default = ["a", "b"] } ]]
++    commands = [["python", { replace = "posargs", default = ["a", "b"], extend = true } ]]
+ 
+ If the positional arguments are not set commands will become ``python a b``, otherwise will be ``python posarg-set``.
++The ``extend`` option instructs tox to unroll the positional arguments within the host structure. Without it the result
++would become ``["python", ["a", "b"]`` which would be invalid.
++
+ Note that:
+ 
+ .. code-block:: toml
+@@ -1318,48 +1354,60 @@ Note that:
+ Differs in sense that the positional arguments will be set as a single argument, while in the original example they are
+ passed through as separate.
+ 
+-Environment variable reference
+-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-.. versionadded:: 4.21
+-
+-You can reference environment variables via the ``env`` replacement:
++Empty commands groups will be ignored:
+ 
+ .. code-block:: toml
+ 
+     [env.A]
+-    set_env.COVERAGE_FILE = { replace = "env", name = "COVERAGE_FILE", default = "ok" }
++    commands = [[], ["pytest]]
+ 
+-If the environment variable is set the the ``COVERAGE_FILE`` will become that, otherwise will default to ``ok``.
++will only invoke pytest. This is especially useful together with posargs allowing you to opt out of running a set of
++commands:
+ 
+-Other configuration reference
+-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++  .. code-block:: toml
++
++    [env.A]
++    commands = [
++        { replace = "posargs", default = ["python", "patch.py"]},
++        ["pytest"]
++    ]
++
++When running ``tox run -e A`` it will invoke ``python patch.py`` followed by pytest. When running ``tox run -e A --`` it
++will invoke only pytest.
++
++
++Environment variable reference
++~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ .. versionadded:: 4.21
+ 
+ You can reference environment variables via the ``env`` replacement:
+ 
+ .. code-block:: toml
+ 
+-    [env_run_base]
+-    extras = ["A", "{env_name}"]
+-    [env.ab]
+-    extras = [{ replace = "ref", raw = ["env_run_base", "extras"] }, "B"]
++    [env.A]
++    set_env.COVERAGE_FILE = { replace = "env", name = "COVERAGE_FILE", default = "ok" }
+ 
+-In this case the ``extras`` for ``ab`` will be ``A``, ``B`` and ``ab``.
++If the environment variable is set the the ``COVERAGE_FILE`` will become that, otherwise will default to ``ok``.
+ 
+-Reference replacement rules
+-~~~~~~~~~~~~~~~~~~~~~~~~~~~
++References within set_env
++~~~~~~~~~~~~~~~~~~~~~~~~~
++.. versionadded:: 4.21.1
+ 
+-When the replacement happens within a list and the returned value is also of type list the content will be extending the
+-list rather than replacing it. For example:
++When you want to inherit ``set_env`` from another environment you can use the feature that if you pass a list of
++dictionaries to ``set_env`` they will be merged together, for example:
+ 
+ .. code-block:: toml
+ 
+-    [env_run_base]
+-    extras = ["A"]
+-    [env.ab]
+-    extras = [{ replace = "ref", raw = ["env_run_base", "extras"] }, "B"]
++        [tool.tox.env_run_base]
++        set_env = { A = "1", B = "2"}
++
++        [tool.tox.env.magic]
++        set_env = [
++            { replace = "ref", of = ["tool", "tox", "env_run_base", "set_env"]},
++            { C = "3", D = "4"},
++        ]
+ 
+-In this case the ``extras`` will be ``'A', 'B'`` rather than ``['A'], 'B'``.  Otherwise the replacement is in-place.
++Here the ``magic`` tox environment will have both ``A``, ``B``, ``C`` and ``D`` environments set.
+ 
+ INI only
+ --------
+diff --git a/docs/user_guide.rst b/docs/user_guide.rst
+index be5d0ecafd..9b40ff16ff 100644
+--- a/docs/user_guide.rst
++++ b/docs/user_guide.rst
+@@ -33,18 +33,18 @@ these. The canonical file for this is either a ``tox.toml`` or ``tox.ini`` file.
+                 "pytest>=8",
+                 "pytest-sugar"
+             ]
+-            commands = [["pytest", { replace = "posargs", default = ["tests"] }]]
++            commands = [["pytest", { replace = "posargs", default = ["tests"], extend = true }]]
+ 
+             [env.lint]
+             description = "run linters"
+             skip_install = true
+             deps = ["black"]
+-            commands = [["black", { replace = "posargs", default = ["."]} ]]
++            commands = [["black", { replace = "posargs", default = ["."], extend = true} ]]
+ 
+             [env.type]
+             description = "run type checks"
+             deps = ["mypy"]
+-            commands = [["mypy", { replace = "posargs", default = ["src", "tests"]} ]]
++            commands = [["mypy", { replace = "posargs", default = ["src", "tests"], extend = true} ]]
+ 
+ 
+     .. tab:: INI
+@@ -133,18 +133,18 @@ When ``<env_name>`` is the name of a specific environment, test environment conf
+             "pytest>=8",
+             "pytest-sugar"
+         ]
+-        commands = [["pytest", { replace = "posargs", default = ["tests"] }]]
++        commands = [["pytest", { replace = "posargs", default = ["tests"], extend = true }]]
+ 
+         [env.lint]
+         description = "run linters"
+         skip_install = true
+         deps = ["black"]
+-        commands = [["black", { replace = "posargs", default = ["."]} ]]
++        commands = [["black", { replace = "posargs", default = ["."], extend = true} ]]
+ 
+         [env.type]
+         description = "run type checks"
+         deps = ["mypy"]
+-        commands = [["mypy", { replace = "posargs", default = ["src", "tests"]} ]]
++        commands = [["mypy", { replace = "posargs", default = ["src", "tests"], extend = true} ]]
+ 
+ .. tab:: INI
+ 
+@@ -217,7 +217,7 @@ Basic example
+             "pytest>=7",
+             "pytest-sugar",
+         ]
+-        commands = [[ "pytest", "tests", { replace = "posargs"} ]]
++        commands = [[ "pytest", "tests", { replace = "posargs", extend = true} ]]
+ 
+ .. tab:: INI
+ 
+diff --git a/src/tox/config/loader/convert.py b/src/tox/config/loader/convert.py
+index a91dbc0c27..9acec5d997 100644
+--- a/src/tox/config/loader/convert.py
++++ b/src/tox/config/loader/convert.py
+@@ -58,6 +58,8 @@ def _to_typing(self, raw: T, of_type: type[V], factory: Factory[V]) -> V:  # noq
+         if origin in {list, List}:
+             entry_type = of_type.__args__[0]  # type: ignore[attr-defined]
+             result = [self.to(i, entry_type, factory) for i in self.to_list(raw, entry_type)]
++            if isclass(entry_type) and issubclass(entry_type, Command):
++                result = [i for i in result if i is not None]
+         elif origin in {set, Set}:
+             entry_type = of_type.__args__[0]  # type: ignore[attr-defined]
+             result = {self.to(i, entry_type, factory) for i in self.to_set(raw, entry_type)}
+@@ -160,7 +162,7 @@ def to_path(value: T) -> Path:
+ 
+     @staticmethod
+     @abstractmethod
+-    def to_command(value: T) -> Command:
++    def to_command(value: T) -> Command | None:
+         """
+         Convert to a command to execute.
+ 
+diff --git a/src/tox/config/loader/memory.py b/src/tox/config/loader/memory.py
+index 34f52f1286..0484dee765 100644
+--- a/src/tox/config/loader/memory.py
++++ b/src/tox/config/loader/memory.py
+@@ -51,7 +51,7 @@ def to_path(value: Any) -> Path:
+         return Path(value)
+ 
+     @staticmethod
+-    def to_command(value: Any) -> Command:
++    def to_command(value: Any) -> Command | None:
+         if isinstance(value, Command):
+             return value
+         if isinstance(value, str):
+diff --git a/src/tox/config/loader/str_convert.py b/src/tox/config/loader/str_convert.py
+index 762c05ec8c..65dd46dad7 100644
+--- a/src/tox/config/loader/str_convert.py
++++ b/src/tox/config/loader/str_convert.py
+@@ -72,7 +72,7 @@ def _win32_process_path_backslash(value: str, escape: str, special_chars: str) -
+         return "".join(result)
+ 
+     @staticmethod
+-    def to_command(value: str) -> Command:
++    def to_command(value: str) -> Command | None:
+         """
+         At this point, ``value`` has already been substituted out, and all punctuation / escapes are final.
+ 
+diff --git a/src/tox/config/loader/toml/__init__.py b/src/tox/config/loader/toml/__init__.py
+index 4cc8a86d4f..08b387e509 100644
+--- a/src/tox/config/loader/toml/__init__.py
++++ b/src/tox/config/loader/toml/__init__.py
+@@ -96,8 +96,10 @@ def to_path(value: TomlTypes) -> Path:
+         return Path(TomlLoader.to_str(value))
+ 
+     @staticmethod
+-    def to_command(value: TomlTypes) -> Command:
+-        return Command(args=cast(List[str], value))  # validated during load in _ensure_type_correct
++    def to_command(value: TomlTypes) -> Command | None:
++        if value:
++            return Command(args=cast(List[str], value))  # validated during load in _ensure_type_correct
++        return None
+ 
+     @staticmethod
+     def to_env_list(value: TomlTypes) -> EnvList:
+diff --git a/src/tox/config/loader/toml/_replace.py b/src/tox/config/loader/toml/_replace.py
+index 62470359d5..0a02346aee 100644
+--- a/src/tox/config/loader/toml/_replace.py
++++ b/src/tox/config/loader/toml/_replace.py
+@@ -38,8 +38,8 @@ def __call__(self, value: TomlTypes, depth: int = 0) -> TomlTypes:  # noqa: C901
+             res_list: list[TomlTypes] = []
+             for val in value:  # apply replacement for every entry
+                 got = self(val, depth)
+-                if isinstance(val, dict) and val.get("replace") in {"posargs", "ref"} and isinstance(got, (list, set)):
+-                    res_list.extend(got)
++                if isinstance(val, dict) and val.get("replace") and val.get("extend"):
++                    res_list.extend(cast(List[Any], got))
+                 else:
+                     res_list.append(got)
+             value = res_list
+@@ -63,18 +63,23 @@ def __call__(self, value: TomlTypes, depth: int = 0) -> TomlTypes:  # noqa: C901
+                         self.args,
+                     )
+                 if replace_type == "ref":  # pragma: no branch
+-                    if of := value.get("raw"):
+-                        validated_of = cast(List[str], validate(of, List[str]))
+-                        return self.loader.load_raw_from_root(self.loader.section.SEP.join(validated_of))
+-                    if self.conf is not None:  # pragma: no branch # noqa: SIM102
+-                        if (env := value.get("env")) and (key := value.get("key")):  # pragma: no branch
+-                            return cast(TomlTypes, self.conf.get_env(cast(str, env))[cast(str, key)])
++                    return self._replace_ref(value, depth)
++
+             res_dict: dict[str, TomlTypes] = {}
+             for key, val in value.items():  # apply replacement for every entry
+                 res_dict[key] = self(val, depth)
+             value = res_dict
+         return value
+ 
++    def _replace_ref(self, value: dict[str, TomlTypes], depth: int) -> TomlTypes:
++        if self.conf is not None and (env := value.get("env")) and (key := value.get("key")):
++            return cast(TomlTypes, self.conf.get_env(cast(str, env))[cast(str, key)])
++        if of := value.get("of"):
++            validated_of = cast(List[str], validate(of, List[str]))
++            loaded = self.loader.load_raw_from_root(self.loader.section.SEP.join(validated_of))
++            return self(loaded, depth)
++        return value
++
+ 
+ _REFERENCE_PATTERN = re.compile(
+     r"""
+diff --git a/src/tox/config/loader/toml/_validate.py b/src/tox/config/loader/toml/_validate.py
+index 590d35578d..080c07b7f3 100644
+--- a/src/tox/config/loader/toml/_validate.py
++++ b/src/tox/config/loader/toml/_validate.py
+@@ -64,7 +64,16 @@ def validate(val: TomlTypes, of_type: type[T]) -> TypeGuard[T]:  # noqa: C901, P
+         if val not in choice:
+             msg = f"{val!r} is not one of literal {','.join(repr(i) for i in choice)}"
+     elif not isinstance(val, of_type):
+-        msg = f"{val!r} is not of type {of_type.__name__!r}"
++        if issubclass(of_type, (bool, str, int)):
++            fail = not isinstance(val, of_type)
++        else:
++            try:  # check if it can be converted
++                of_type(val)  # type: ignore[call-arg]
++                fail = False
++            except Exception:  # noqa: BLE001
++                fail = True
++        if fail:
++            msg = f"{val!r} is not of type {of_type.__name__!r}"
+     if msg:
+         raise TypeError(msg)
+     return cast(T, val)  # type: ignore[return-value] # logic too complicated for mypy
+diff --git a/src/tox/config/set_env.py b/src/tox/config/set_env.py
+index e3f012ffd3..cf29cee0c8 100644
+--- a/src/tox/config/set_env.py
++++ b/src/tox/config/set_env.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++from functools import reduce
+ from pathlib import Path
+ from typing import Callable, Iterator, Mapping
+ 
+@@ -10,7 +11,9 @@
+ 
+ 
+ class SetEnv:
+-    def __init__(self, raw: str | dict[str, str], name: str, env_name: str | None, root: Path) -> None:
++    def __init__(  # noqa: C901
++        self, raw: str | dict[str, str] | list[dict[str, str]], name: str, env_name: str | None, root: Path
++    ) -> None:
+         self.changed = False
+         self._materialized: dict[str, str] = {}  # env vars we already loaded
+         self._raw: dict[str, str] = {}  # could still need replacement
+@@ -23,6 +26,9 @@ def __init__(self, raw: str | dict[str, str], name: str, env_name: str | None, r
+         if isinstance(raw, dict):
+             self._raw = raw
+             return
++        if isinstance(raw, list):
++            self._raw = reduce(lambda a, b: {**a, **b}, raw)
++            return
+         for line in raw.splitlines():  # noqa: PLR1702
+             if line.strip():
+                 if line.startswith("file|"):
+diff --git a/src/tox/config/sets.py b/src/tox/config/sets.py
+index 5182043e11..b78ff84cbd 100644
+--- a/src/tox/config/sets.py
++++ b/src/tox/config/sets.py
+@@ -235,6 +235,13 @@ def set_env_factory(raw: object) -> SetEnv:
+             if not (
+                 isinstance(raw, str)
+                 or (isinstance(raw, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in raw.items()))
++                or (
++                    isinstance(raw, list)
++                    and all(
++                        isinstance(e, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in e.items())
++                        for e in raw
++                    )
++                )
+             ):
+                 raise TypeError(raw)
+             return SetEnv(raw, self.name, self.env_name, root)
+diff --git a/src/tox/provision.py b/src/tox/provision.py
+index 9e1e2bf8c8..6ca51cb4fc 100644
+--- a/src/tox/provision.py
++++ b/src/tox/provision.py
+@@ -94,7 +94,7 @@ def add_tox_requires_min_version(reqs: list[Requirement]) -> list[Requirement]:
+         base=[],  # disable inheritance for provision environments
+         package="skip",  # no packaging for this please
+         # use our own dependency specification
+-        deps=PythonDeps("\n".join(str(r) for r in requires), root=state.conf.core["tox_root"]),
++        deps=PythonDeps(requires, root=state.conf.core["tox_root"]),
+         pass_env=["*"],  # do not filter environment variables, will be handled by provisioned tox
+         recreate=state.conf.options.recreate and not state.conf.options.no_recreate_provision,
+     )
+diff --git a/src/tox/pytest.py b/src/tox/pytest.py
+index 54503e3006..13072fd472 100644
+--- a/src/tox/pytest.py
++++ b/src/tox/pytest.py
+@@ -259,7 +259,10 @@ def chdir(self, to: Path | None = None) -> Iterator[None]:
+         finally:
+             os.chdir(cur_dir)
+ 
+-    def run(self, *args: str, from_cwd: Path | None = None) -> ToxRunOutcome:
++    def run(self, *args: str, from_cwd: Path | None = None, raise_on_config_fail: bool = True) -> ToxRunOutcome:
++        if raise_on_config_fail and args and args[0] in {"c", "config"}:
++            self.monkeypatch.setenv("_TOX_SHOW_CONFIG_RAISE", "1")
++
+         with self.chdir(from_cwd):
+             state = None
+             self._capfd.readouterr()  # start with a clean state - drain
+diff --git a/src/tox/session/cmd/show_config.py b/src/tox/session/cmd/show_config.py
+index 7bc79c2107..0a4f4e45a1 100644
+--- a/src/tox/session/cmd/show_config.py
++++ b/src/tox/session/cmd/show_config.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import os
+ from textwrap import indent
+ from typing import TYPE_CHECKING, Iterable
+ 
+@@ -102,7 +103,9 @@ def print_conf(is_colored: bool, conf: ConfigSet, keys: Iterable[str]) -> None:
+         try:
+             value = conf[key]
+             as_str, multi_line = stringify(value)
+-        except Exception as exception:  # because e.g. the interpreter cannot be found  # noqa: BLE001
++        except Exception as exception:  # because e.g. the interpreter cannot be found
++            if os.environ.get("_TOX_SHOW_CONFIG_RAISE"):  # pragma: no branch
++                raise  # pragma: no cover
+             as_str, multi_line = _colored(is_colored, Fore.LIGHTRED_EX, f"# Exception: {exception!r}"), False
+         if multi_line and "\n" not in as_str:
+             multi_line = False
+diff --git a/src/tox/tox_env/python/pip/req_file.py b/src/tox/tox_env/python/pip/req_file.py
+index c88e5cd174..d1fc4e810b 100644
+--- a/src/tox/tox_env/python/pip/req_file.py
++++ b/src/tox/tox_env/python/pip/req_file.py
+@@ -3,6 +3,8 @@
+ import re
+ from typing import TYPE_CHECKING
+ 
++from packaging.requirements import Requirement
++
+ from .req.file import ParsedRequirement, ReqFileLines, RequirementsFile
+ 
+ if TYPE_CHECKING:
+@@ -16,9 +18,10 @@ class PythonDeps(RequirementsFile):
+     # thus cannot be used in the testenv `deps` list
+     _illegal_options: Final[list[str]] = ["hash"]
+ 
+-    def __init__(self, raw: str, root: Path) -> None:
++    def __init__(self, raw: str | list[str] | list[Requirement], root: Path) -> None:
+         super().__init__(root / "tox.ini", constraint=False)
+-        self._raw = self._normalize_raw(raw)
++        got = raw if isinstance(raw, str) else "\n".join(str(i) for i in raw)
++        self._raw = self._normalize_raw(got)
+         self._unroll: tuple[list[str], list[str]] | None = None
+         self._req_parser_: RequirementsFile | None = None
+ 
+@@ -124,7 +127,13 @@ def __iadd__(self, other: PythonDeps) -> PythonDeps:  # noqa: PYI034
+ 
+     @classmethod
+     def factory(cls, root: Path, raw: object) -> PythonDeps:
+-        if not isinstance(raw, str):
++        if not (
++            isinstance(raw, str)
++            or (
++                isinstance(raw, list)
++                and (all(isinstance(i, str) for i in raw) or all(isinstance(i, Requirement) for i in raw))
++            )
++        ):
+             raise TypeError(raw)
+         return cls(raw, root)
+ 
+diff --git a/tests/config/loader/test_str_convert.py b/tests/config/loader/test_str_convert.py
+index e94da7b45c..8540e2105d 100644
+--- a/tests/config/loader/test_str_convert.py
++++ b/tests/config/loader/test_str_convert.py
+@@ -94,8 +94,9 @@ def test_str_convert_nok(raw: str, of_type: type[Any], msg: str, exc_type: type[
+     ],
+ )
+ def test_invalid_shell_expression(value: str, expected: list[str]) -> None:
+-    result = StrConvert().to_command(value).args
+-    assert result == expected
++    result = StrConvert().to_command(value)
++    assert result is not None
++    assert result.args == expected
+ 
+ 
+ SIMPLE_ARGS = [
+@@ -180,8 +181,9 @@ def test_shlex_platform_specific(sys_platform: str, value: str, expected: list[s
+     if sys_platform != "win32" and value.startswith("SPECIAL:"):
+         # on non-windows platform, backslash is always an escape, not path separator
+         expected = [exp.replace("\\", "") for exp in expected]
+-    result = StrConvert().to_command(value).args
+-    assert result == expected
++    result = StrConvert().to_command(value)
++    assert result is not None
++    assert result.args == expected
+ 
+ 
+ @pytest.mark.parametrize(
+diff --git a/tests/config/source/test_toml_pyproject.py b/tests/config/source/test_toml_pyproject.py
+index 4b597253f3..b8da59c79d 100644
+--- a/tests/config/source/test_toml_pyproject.py
++++ b/tests/config/source/test_toml_pyproject.py
+@@ -140,7 +140,7 @@ def test_config_in_toml_replace_posargs_default(tox_project: ToxProjectCreator)
+     project = tox_project({
+         "pyproject.toml": """
+         [tool.tox.env.A]
+-        commands = [["python", { replace = "posargs", default = ["a", "b"] } ]]
++        commands = [["python", { replace = "posargs", default = ["a", "b"], extend = true } ]]
+         """
+     })
+     outcome = project.run("c", "-e", "A", "-k", "commands")
+@@ -148,11 +148,35 @@ def test_config_in_toml_replace_posargs_default(tox_project: ToxProjectCreator)
+     outcome.assert_out_err("[testenv:A]\ncommands = python a b\n", "")
+ 
+ 
++def test_config_in_toml_replace_posargs_empty(tox_project: ToxProjectCreator) -> None:
++    project = tox_project({
++        "pyproject.toml": """
++        [tool.tox.env.A]
++        commands = [["python", { replace = "posargs", default = ["a", "b"], extend = true } ]]
++        """
++    })
++    outcome = project.run("c", "-e", "A", "-k", "commands", "--")
++    outcome.assert_success()
++    outcome.assert_out_err("[testenv:A]\ncommands = python\n", "")
++
++
++def test_config_in_toml_replace_posargs_empty_optional(tox_project: ToxProjectCreator) -> None:
++    project = tox_project({
++        "pyproject.toml": """
++        [tool.tox.env.A]
++        commands = [{ replace = "posargs", default = ["a", "b"] }, ["python"]]
++        """
++    })
++    outcome = project.run("c", "-e", "A", "-k", "commands", "--")
++    outcome.assert_success()
++    outcome.assert_out_err("[testenv:A]\ncommands = python\n", "")
++
++
+ def test_config_in_toml_replace_posargs_set(tox_project: ToxProjectCreator) -> None:
+     project = tox_project({
+         "pyproject.toml": """
+         [tool.tox.env.A]
+-        commands = [["python", { replace = "posargs", default = ["a", "b"] } ]]
++        commands = [["python", { replace = "posargs", default = ["a", "b"], extend = true } ]]
+         """
+     })
+     outcome = project.run("c", "-e", "A", "-k", "commands", "--", "c", "d")
+@@ -188,20 +212,20 @@ def test_config_in_toml_replace_env_set(tox_project: ToxProjectCreator, monkeypa
+     outcome.assert_out_err("[testenv:A]\ndescription = OK2\n", "")
+ 
+ 
+-def test_config_in_toml_replace_ref_raw(tox_project: ToxProjectCreator, monkeypatch: pytest.MonkeyPatch) -> None:
++def test_config_in_toml_replace_ref_of(tox_project: ToxProjectCreator, monkeypatch: pytest.MonkeyPatch) -> None:
+     project = tox_project({
+         "pyproject.toml": """
+         [tool.tox.env_run_base]
+         extras = ["A", "{env_name}"]
+-        [tool.tox.env.a]
+-        extras = [{ replace = "ref", raw = ["tool", "tox", "env_run_base", "extras"] }, "B"]
++        [tool.tox.env.c]
++        extras = [{ replace = "ref", of = ["tool", "tox", "env_run_base", "extras"], extend = true}, "B"]
+         """
+     })
+     monkeypatch.setenv("NAME", "OK2")
+ 
+-    outcome = project.run("c", "-e", "a", "-k", "extras")
++    outcome = project.run("c", "-e", "c", "-k", "extras")
+     outcome.assert_success()
+-    outcome.assert_out_err("[testenv:a]\nextras =\n  a\n  b\n  {env-name}\n", "")
++    outcome.assert_out_err("[testenv:c]\nextras =\n  a\n  b\n  c\n", "")
+ 
+ 
+ def test_config_in_toml_replace_ref_env(tox_project: ToxProjectCreator, monkeypatch: pytest.MonkeyPatch) -> None:
+@@ -210,7 +234,7 @@ def test_config_in_toml_replace_ref_env(tox_project: ToxProjectCreator, monkeypa
+         [tool.tox.env.b]
+         extras = ["{env_name}"]
+         [tool.tox.env.a]
+-        extras = [{ replace = "ref", env = "b", "key" = "extras" }, "a"]
++        extras = [{ replace = "ref", env = "b", "key" = "extras", extend = true }, "a"]
+         """
+     })
+     monkeypatch.setenv("NAME", "OK2")
+@@ -313,3 +337,67 @@ def test_config_in_toml_bad_type_env(tox_project: ToxProjectCreator) -> None:
+     outcome = project.run("l")
+     outcome.assert_failed()
+     outcome.assert_out_err("ROOT: HandledError| tool.tox.env.a must be a table, is 'int'\n", "")
++
++
++def test_config_deps(tox_project: ToxProjectCreator) -> None:
++    project = tox_project({
++        "pyproject.toml": """
++        [tool.tox.env_run_base]
++        deps = ['mypy>=1', 'ruff==1']
++        """
++    })
++    outcome = project.run("c", "-k", "deps")
++    outcome.assert_success()
++    outcome.assert_out_err("[testenv:py]\ndeps =\n  mypy>=1\n  ruff==1\n", "")
++
++
++def test_config_deps_req(tox_project: ToxProjectCreator) -> None:
++    project = tox_project({
++        "pyproject.toml": """
++        [tool.tox.env_run_base]
++        deps = ['-r requirements.txt']
++        """
++    })
++    outcome = project.run("c", "-k", "deps")
++    outcome.assert_success()
++    outcome.assert_out_err("[testenv:py]\ndeps = -r requirements.txt\n", "")
++
++
++def test_config_requires(tox_project: ToxProjectCreator) -> None:
++    project = tox_project({
++        "pyproject.toml": """
++        [tool.tox]
++        requires = ['tox>=4']
++        """
++    })
++    outcome = project.run("c", "-k", "requires", "--core")
++    outcome.assert_success()
++    outcome.assert_out_err("[testenv:py]\n\n[tox]\nrequires =\n  tox>=4\n  tox\n", "")
++
++
++def test_config_set_env_ref(tox_project: ToxProjectCreator) -> None:
++    project = tox_project({
++        "pyproject.toml": """
++        [tool.tox.env_run_base]
++        set_env = { A = "1", B = "2"}
++        [tool.tox.env.t]
++        set_env = [
++            { replace = "ref", of = ["tool", "tox", "env_run_base", "set_env"]},
++            { C = "3", D = "4"},
++        ]
++        """
++    })
++    outcome = project.run("c", "-e" "t", "-k", "set_env", "--hashseed", "1")
++    outcome.assert_success()
++    out = (
++        "[testenv:t]\n"
++        "set_env =\n"
++        "  A=1\n"
++        "  B=2\n"
++        "  C=3\n"
++        "  D=4\n"
++        "  PIP_DISABLE_PIP_VERSION_CHECK=1\n"
++        "  PYTHONHASHSEED=1\n"
++        "  PYTHONIOENCODING=utf-8\n"
++    )
++    outcome.assert_out_err(out, "")
+diff --git a/tests/config/test_set_env.py b/tests/config/test_set_env.py
+index 63d699fb05..d4440ab222 100644
+--- a/tests/config/test_set_env.py
++++ b/tests/config/test_set_env.py
+@@ -120,7 +120,7 @@ def test_set_env_tty_off(eval_set_env: EvalSetEnv, mocker: MockerFixture) -> Non
+ 
+ def test_set_env_circular_use_os_environ(tox_project: ToxProjectCreator) -> None:
+     prj = tox_project({"tox.ini": "[testenv]\npackage=skip\nset_env=a={env:b}\n b={env:a}"})
+-    result = prj.run("c", "-e", "py")
++    result = prj.run("c", "-e", "py", raise_on_config_fail=False)
+     result.assert_success()
+     assert "replace failed in py.set_env with MatchRecursionError" in result.out, result.out
+     assert "circular chain between set env a, b" in result.out, result.out
+diff --git a/tests/session/cmd/test_show_config.py b/tests/session/cmd/test_show_config.py
+index 721ad5ffd6..a5015c260a 100644
+--- a/tests/session/cmd/test_show_config.py
++++ b/tests/session/cmd/test_show_config.py
+@@ -94,7 +94,7 @@ def test_show_config_exception(tox_project: ToxProjectCreator) -> None:
+         """,
+         },
+     )
+-    outcome = project.run("c", "-e", "a", "-k", "env_site_packages_dir")
++    outcome = project.run("c", "-e", "a", "-k", "env_site_packages_dir", raise_on_config_fail=False)
+     outcome.assert_success()
+     txt = (
+         "\nenv_site_packages_dir = # Exception: "
+@@ -105,7 +105,7 @@ def test_show_config_exception(tox_project: ToxProjectCreator) -> None:
+ 
+ def test_show_config_empty_install_command_exception(tox_project: ToxProjectCreator) -> None:
+     project = tox_project({"tox.ini": "[testenv:a]\ninstall_command="})
+-    outcome = project.run("c", "-e", "a", "-k", "install_command")
++    outcome = project.run("c", "-e", "a", "-k", "install_command", raise_on_config_fail=False)
+     outcome.assert_success()
+     txt = "\ninstall_command = # Exception: ValueError(\"attempting to parse '' into a command failed\")"
+     assert txt in outcome.out
+@@ -151,7 +151,7 @@ def test_show_config_pkg_env_once(
+     prev_ver, impl = patch_prev_py(True)
+     ini = f"[tox]\nenv_list=py{prev_ver},py\n[testenv]\npackage=wheel"
+     project = tox_project({"tox.ini": ini, "pyproject.toml": ""})
+-    result = project.run("c", "-e", "ALL")
++    result = project.run("c", "-e", "ALL", raise_on_config_fail=False)
+     result.assert_success()
+     parser = ConfigParser(interpolation=None)
+     parser.read_string(result.out)
+@@ -166,7 +166,7 @@ def test_show_config_pkg_env_skip(
+     prev_ver, _impl = patch_prev_py(False)
+     ini = f"[tox]\nenv_list=py{prev_ver},py\n[testenv]\npackage=wheel"
+     project = tox_project({"tox.ini": ini, "pyproject.toml": ""})
+-    result = project.run("c", "-e", "ALL")
++    result = project.run("c", "-e", "ALL", raise_on_config_fail=False)
+     result.assert_success()
+     parser = ConfigParser(interpolation=None)
+     parser.read_string(result.out)
+diff --git a/tests/tox_env/python/test_python_api.py b/tests/tox_env/python/test_python_api.py
+index 181254c623..02b6b91ca3 100644
+--- a/tests/tox_env/python/test_python_api.py
++++ b/tests/tox_env/python/test_python_api.py
+@@ -167,7 +167,7 @@ def test_base_python_env_conflict_show_conf(tox_project: ToxProjectCreator, igno
+     if ignore_conflict is not None:
+         ini += f"\n[tox]\nignore_base_python_conflict={ignore_conflict}"
+     project = tox_project({"tox.ini": ini})
+-    result = project.run("c", "-e", f"py{py_ver}", "-k", "base_python")
++    result = project.run("c", "-e", f"py{py_ver}", "-k", "base_python", raise_on_config_fail=False)
+     result.assert_success()
+     if ignore_conflict:
+         out = f"[testenv:py{py_ver}]\nbase_python = py{py_ver}\n"
+diff --git a/tests/tox_env/test_tox_env_api.py b/tests/tox_env/test_tox_env_api.py
+index 7277fb4383..f6792a627d 100644
+--- a/tests/tox_env/test_tox_env_api.py
++++ b/tests/tox_env/test_tox_env_api.py
+@@ -88,7 +88,7 @@ def test_tox_env_pass_env_literal_miss() -> None:
+ def test_tox_env_pass_env_fails_on_whitespace(tox_project: ToxProjectCreator) -> None:
+     first, second = "A B", "C D"
+     prj = tox_project({"tox.ini": f"[testenv]\npackage=skip\npass_env = {first}\n {second}\n  E"})
+-    result = prj.run("c", "-k", "pass_env")
++    result = prj.run("c", "-k", "pass_env", raise_on_config_fail=False)
+     result.assert_success()
+     msg = (
+         '[testenv:py]\npass_env = # Exception: Fail("pass_env values cannot contain whitespace, use comma to have '
+diff --git a/tox.ini b/tox.ini
+deleted file mode 100644
+index 89bb29d24e..0000000000
+--- a/tox.ini
++++ /dev/null
+@@ -1,103 +0,0 @@
+-[tox]
+-requires =
+-    tox>=4.2
+-env_list =
+-    fix
+-    3.13
+-    3.12
+-    3.11
+-    3.10
+-    3.9
+-    3.8
+-    cov
+-    type
+-    docs
+-    pkg_meta
+-skip_missing_interpreters = true
+-
+-[testenv]
+-description = run the tests with pytest under {env_name}
+-package = wheel
+-wheel_build_env = .pkg
+-extras =
+-    testing
+-pass_env =
+-    PYTEST_*
+-    SSL_CERT_FILE
+-set_env =
+-    COVERAGE_FILE = {env:COVERAGE_FILE:{work_dir}{/}.coverage.{env_name}}
+-    COVERAGE_PROCESS_START = {tox_root}{/}pyproject.toml
+-commands =
+-    pytest {posargs: \
+-      --junitxml {work_dir}{/}junit.{env_name}.xml --cov {env_site_packages_dir}{/}tox --cov {tox_root}{/}tests \
+-      --cov-config={tox_root}{/}pyproject.toml --no-cov-on-fail --cov-report term-missing:skip-covered --cov-context=test \
+-      --cov-report html:{env_tmp_dir}{/}htmlcov \
+-      --cov-report xml:{work_dir}{/}coverage.{env_name}.xml \
+-      -n={env:PYTEST_XDIST_AUTO_NUM_WORKERS:auto} \
+-      tests --durations 15 {env:INTEGRATION:--run-integration}}
+-    diff-cover --compare-branch {env:DIFF_AGAINST:origin/main} {work_dir}{/}coverage.{env_name}.xml
+-
+-[testenv:fix]
+-description = format the code base to adhere to our styles, and complain about what we cannot do automatically
+-skip_install = true
+-deps =
+-    pre-commit-uv>=4.1.3
+-pass_env =
+-    {[testenv]pass_env}
+-    PROGRAMDATA
+-commands =
+-    pre-commit run --all-files --show-diff-on-failure {posargs}
+-
+-[testenv:type]
+-description = run type check on code base
+-deps =
+-    mypy==1.11.2
+-    types-cachetools>=5.5.0.20240820
+-    types-chardet>=5.0.4.6
+-commands =
+-    mypy src/tox
+-    mypy tests
+-
+-[testenv:docs]
+-description = build documentation
+-extras =
+-    docs
+-commands =
+-    {posargs: sphinx-build -d "{env_tmp_dir}{/}docs_tree" docs "{work_dir}{/}docs_out" --color -b linkcheck}
+-    sphinx-build -d "{env_tmp_dir}{/}docs_tree" docs "{work_dir}{/}docs_out" --color -b html -W
+-    python -c 'print(r"documentation available under file://{work_dir}{/}docs_out{/}index.html")'
+-
+-[testenv:pkg_meta]
+-description = check that the long description is valid
+-skip_install = true
+-deps =
+-    check-wheel-contents>=0.6
+-    twine>=5.1.1
+-    uv>=0.4.17
+-commands =
+-    uv build --sdist --wheel --out-dir {env_tmp_dir} .
+-    twine check {env_tmp_dir}{/}*
+-    check-wheel-contents --no-config {env_tmp_dir}
+-
+-[testenv:release]
+-description = do a release, required posargs of the version number
+-skip_install = true
+-deps =
+-    gitpython>=3.1.43
+-    packaging>=24.1
+-    towncrier>=24.8
+-commands =
+-    python {tox_root}/tasks/release.py --version {posargs}
+-
+-[testenv:dev]
+-description = dev environment with all deps at {envdir}
+-package = editable
+-deps =
+-    {[testenv:release]deps}
+-extras =
+-    docs
+-    testing
+-commands =
+-    python -m pip list --format=columns
+-    python -c 'print(r"{env_python}")'
+-uv_seed = true
+diff --git a/tox.toml b/tox.toml
+index 4d07a37b21..0a24c24ca4 100644
+--- a/tox.toml
++++ b/tox.toml
+@@ -13,27 +13,29 @@ set_env.COVERAGE_FILECOVERAGE_PROCESS_START = "{tox_root}{/}pyproject.toml"
+ commands = [
+   [
+     "pytest",
+-    { replace = "posargs", default = [
++    { replace = "posargs", extend = true, default = [
++      "--durations",
++      "15",
++      "-n",
++      { replace = "env", name = "PYTEST_XDIST_AUTO_NUM_WORKERS", default = "auto" },
+       "--junitxml",
+       "{work_dir}{/}junit.{env_name}.xml",
++      "--no-cov-on-fail",
+       "--cov",
+       "{env_site_packages_dir}{/}tox",
+       "--cov",
+       "{tox_root}{/}tests",
+-      "--cov-config={tox_root}{/}pyproject.toml",
+-      "-no-cov-on-fail",
++      "--cov-config",
++      "{tox_root}{/}pyproject.toml",
++      "--cov-context",
++      "test",
+       "--cov-report",
+       "term-missing:skip-covered",
+-      "--cov-context=test",
+       "--cov-report",
+       "html:{env_tmp_dir}{/}htmlcov",
+       "--cov-report",
+       "xml:{work_dir}{/}coverage.{env_name}.xml",
+-      "-n",
+-      { replace = "env", name = "PYTEST_XDIST_AUTO_NUM_WORKERS", default = "auto" },
+       "tests",
+-      "--durations",
+-      "15",
+       "--run-integration",
+     ] },
+   ],
+@@ -49,7 +51,7 @@ commands = [
+ description = "format the code base to adhere to our styles, and complain about what we cannot do automatically"
+ skip_install = true
+ deps = ["pre-commit-uv>=4.1.3"]
+-pass_env = [{ replace = "ref", of = ["env_run_base", "pass_env"] }, "PROGRAMDATA"]
++pass_env = [{ replace = "ref", of = ["env_run_base", "pass_env"], extend = true }, "PROGRAMDATA"]
+ commands = [["pre-commit", "run", "--all-files", "--show-diff-on-failure", { replace = "posargs" }]]
+ 
+ [env.type]
+@@ -125,7 +127,7 @@ commands = [["python", "{tox_root}/tasks/release.py", "--version", "{posargs}"]]
+ [env.dev]
+ description = "dev environment with all deps at {envdir}"
+ package = "editable"
+-deps = { replace = "ref", of = ["env", "release", "deps"] }
++deps = { replace = "ref", of = ["env", "release", "deps"], extend = true }
+ extras = ["docs", "testing"]
+ commands = [["python", "-m", "pip", "list", "--format=columns"], ["python", "-c", 'print(r"{env_python}")']]
+ uv_seed = true

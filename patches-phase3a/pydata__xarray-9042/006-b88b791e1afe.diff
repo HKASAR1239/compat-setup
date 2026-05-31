@@ -1,0 +1,43 @@
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 49d39927f2b..6a97ceaff00 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -23,6 +23,12 @@ v2024.05.1 (unreleased)
+ New Features
+ ~~~~~~~~~~~~
+ 
++Performance
++~~~~~~~~~~~
++
++- Small optimization to the netCDF4 and h5netcdf backends (:issue:`9058`, :pull:`9067`).
++  By `Deepak Cherian <https://github.com/dcherian>`_.
++
+ 
+ Breaking changes
+ ~~~~~~~~~~~~~~~~
+diff --git a/xarray/backends/h5netcdf_.py b/xarray/backends/h5netcdf_.py
+index 71463193939..1993d5b19de 100644
+--- a/xarray/backends/h5netcdf_.py
++++ b/xarray/backends/h5netcdf_.py
+@@ -221,7 +221,7 @@ def open_store_variable(self, name, var):
+ 
+         # save source so __repr__ can detect if it's local or not
+         encoding["source"] = self._filename
+-        encoding["original_shape"] = var.shape
++        encoding["original_shape"] = data.shape
+ 
+         vlen_dtype = h5py.check_dtype(vlen=var.dtype)
+         if vlen_dtype is str:
+diff --git a/xarray/backends/netCDF4_.py b/xarray/backends/netCDF4_.py
+index ae86c4ce384..1edf57c176e 100644
+--- a/xarray/backends/netCDF4_.py
++++ b/xarray/backends/netCDF4_.py
+@@ -454,7 +454,7 @@ def open_store_variable(self, name: str, var):
+         pop_to(attributes, encoding, "least_significant_digit")
+         # save source so __repr__ can detect if it's local or not
+         encoding["source"] = self._filename
+-        encoding["original_shape"] = var.shape
++        encoding["original_shape"] = data.shape
+ 
+         return Variable(dimensions, data, attributes, encoding)
+ 

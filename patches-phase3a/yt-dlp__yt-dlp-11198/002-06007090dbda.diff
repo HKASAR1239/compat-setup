@@ -1,0 +1,42 @@
+diff --git a/test/test_utils.py b/test/test_utils.py
+index af3924dedb65..d4b846f56fba 100644
+--- a/test/test_utils.py
++++ b/test/test_utils.py
+@@ -221,9 +221,10 @@ def test_sanitize_ids(self):
+         self.assertEqual(sanitize_filename('N0Y__7-UOdI', is_id=True), 'N0Y__7-UOdI')
+ 
+     def test_sanitize_path(self):
+-        if sys.platform != 'win32':
+-            return
++        with unittest.mock.patch('sys.platform', 'win32'):
++            self._test_sanitize_path()
+ 
++    def _test_sanitize_path(self):
+         self.assertEqual(sanitize_path('abc'), 'abc')
+         self.assertEqual(sanitize_path('abc/def'), 'abc\\def')
+         self.assertEqual(sanitize_path('abc\\def'), 'abc\\def')
+@@ -258,7 +259,8 @@ def test_sanitize_path(self):
+ 
+         self.assertEqual(sanitize_path('\\abc'), '\\abc')
+         self.assertEqual(sanitize_path('C:abc'), 'C:abc')
+-        self.assertEqual(sanitize_path('C:abc\\..\\'), 'C:..\\')
++        self.assertEqual(sanitize_path('C:abc\\..\\'), 'C:..')
++        self.assertEqual(sanitize_path('C:\\abc:%(title)s.%(ext)s'), 'C:\\abc#%(title)s.%(ext)s')
+ 
+     def test_sanitize_url(self):
+         self.assertEqual(sanitize_url('//foo.bar'), 'http://foo.bar')
+diff --git a/yt_dlp/utils/_utils.py b/yt_dlp/utils/_utils.py
+index 57833d850e0d..967f01fdf941 100644
+--- a/yt_dlp/utils/_utils.py
++++ b/yt_dlp/utils/_utils.py
+@@ -675,8 +675,8 @@ def _sanitize_path_parts(parts):
+             sanitized_parts.append('..')
+             continue
+         # Replace invalid segments with `#`
+-        # - trailing dots (`asdf...` => `asdf..#`)
+-        # - invalid chars (`<>` => `#`)
++        # - trailing dots and spaces (`asdf...` => `asdf..#`)
++        # - invalid chars (`<>` => `##`)
+         sanitized_part = re.sub(r'[/<>:"\|\\?\*]|[\s.]$', '#', part)
+         sanitized_parts.append(sanitized_part)
+ 

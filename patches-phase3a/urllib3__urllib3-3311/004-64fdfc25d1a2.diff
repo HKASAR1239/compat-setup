@@ -1,0 +1,13 @@
+diff --git a/src/urllib3/connectionpool.py b/src/urllib3/connectionpool.py
+index 18bbe431e7..52bb8657fc 100644
+--- a/src/urllib3/connectionpool.py
++++ b/src/urllib3/connectionpool.py
+@@ -556,7 +556,7 @@ def _make_request(
+             # HTTP version
+             http_version,
+             response.status,
+-            getattr(response, "length_remaining", None),
++            response.length_remaining,  # type: ignore[attr-defined]
+         )
+ 
+         return response

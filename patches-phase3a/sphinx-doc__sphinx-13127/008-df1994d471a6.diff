@@ -1,0 +1,15 @@
+diff --git a/sphinx/util/requests.py b/sphinx/util/requests.py
+index 82b059673c7..13e5364d4b6 100644
+--- a/sphinx/util/requests.py
++++ b/sphinx/util/requests.py
+@@ -76,7 +76,9 @@ def get_redirect_target(self, resp: requests.Response) -> str | None:
+         return super().get_redirect_target(resp)
+ 
+     def __init__(self, *args: Any, **kwargs: Any) -> None:
+-        self._ignored_redirects: list[re.Pattern[str]] = kwargs.pop('_ignored_redirects', [])
++        self._ignored_redirects: list[re.Pattern[str]] = kwargs.pop(
++            '_ignored_redirects', []
++        )
+         super().__init__(*args, **kwargs)
+ 
+     def request(  # type: ignore[override]

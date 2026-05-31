@@ -1,0 +1,64 @@
+diff --git a/lib/logitech_receiver/settings_templates.py b/lib/logitech_receiver/settings_templates.py
+index c474d149d..58885f90e 100644
+--- a/lib/logitech_receiver/settings_templates.py
++++ b/lib/logitech_receiver/settings_templates.py
+@@ -231,12 +231,25 @@ class _PerformanceMXDpi(RegisterDpi):
+ 
+ 
+ # ignore the capabilities part of the feature - all devices should be able to swap Fn state
+-# just use the current host (first byte = 0xFF) part of the feature to read and set the Fn state
++# can't just use the first byte = 0xFF (for current host) because of a bug in the firmware of the MX Keys S
+ class K375sFnSwap(FnSwapVirtual):
+     feature = _F.K375S_FN_INVERSION
+-    rw_options = {"prefix": b"\xFF"}
+     validator_options = {"true_value": b"\x01", "false_value": b"\x00", "read_skip_byte_count": 1}
+ 
++    class rw_class(_FeatureRW):
++        def find_current_host(self, device):
++            if not self.prefix:
++                response = device.feature_request(_F.HOSTS_INFO, 0x00)
++                self.prefix = response[3:4] if response else b"\xFF"
++
++        def read(self, device, data_bytes=b""):
++            self.find_current_host(device)
++            return super().read(device, data_bytes)
++
++        def write(self, device, data_bytes):
++            self.find_current_host(device)
++            return super().write(device, data_bytes)
++
+ 
+ class FnSwap(FnSwapVirtual):
+     feature = _F.FN_INVERSION
+diff --git a/tests/logitech_receiver/test_setting_templates.py b/tests/logitech_receiver/test_setting_templates.py
+index 84fcf090d..b648dadf0 100644
+--- a/tests/logitech_receiver/test_setting_templates.py
++++ b/tests/logitech_receiver/test_setting_templates.py
+@@ -118,6 +118,19 @@ class FeatureTest:
+         hidpp.Response("FF0001", 0x0600, "FF"),
+         hidpp.Response("FF0101", 0x0610, "FF01"),
+     ),
++    Setup(
++        FeatureTest(settings_templates.K375sFnSwap, False, True, offset=0x06),
++        hidpp.Response("050001", 0x0000, "1815"),  # HOSTS_INFO
++        hidpp.Response("FF0001", 0x0600, "FF"),
++        hidpp.Response("FF0101", 0x0610, "FF01"),
++    ),
++    Setup(
++        FeatureTest(settings_templates.K375sFnSwap, False, True, offset=0x06),
++        hidpp.Response("050001", 0x0000, "1815"),  # HOSTS_INFO
++        hidpp.Response("07050301", 0x0500),  # current host is 0x01, i.e., host 2
++        hidpp.Response("010001", 0x0600, "01"),
++        hidpp.Response("010101", 0x0610, "0101"),
++    ),
+     Setup(
+         FeatureTest(settings_templates.FnSwap, True, False),
+         hidpp.Response("01", 0x0400),
+@@ -473,6 +486,7 @@ def mock_gethostname(mocker):
+ @pytest.mark.parametrize("test", simple_tests)
+ def test_simple_template(test, mocker, mock_gethostname):
+     tst = test.test
++    print("TEST", tst.sclass.feature)
+     device = hidpp.Device(responses=test.responses, feature=tst.sclass.feature, offset=tst.offset, version=tst.version)
+     spy_request = mocker.spy(device, "request")
+ 

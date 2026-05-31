@@ -1,0 +1,85 @@
+diff --git a/src/pdm/models/finder.py b/src/pdm/models/finder.py
+index bef1675ff7..6073e4ef49 100644
+--- a/src/pdm/models/finder.py
++++ b/src/pdm/models/finder.py
+@@ -1,16 +1,18 @@
+ from __future__ import annotations
+ 
++import logging
+ from typing import TYPE_CHECKING, Any, Callable
+ 
+ import unearth
+ from dep_logic.specifiers import InvalidSpecifier, parse_version_specifier
+-from packaging.specifiers import InvalidSpecifier as PkgInvalidSpecifier
+ from packaging.version import Version
+ from unearth.evaluator import Evaluator, FormatControl, LinkMismatchError, Package
+ 
+ from pdm.models.markers import EnvSpec
+ from pdm.utils import parse_version
+ 
++logger = logging.getLogger("unearth")
++
+ if TYPE_CHECKING:
+     from pdm.models.session import PDMPyPIClient
+ 
+@@ -40,8 +42,11 @@ def check_requires_python(self, link: unearth.Link) -> None:
+         if link.requires_python:
+             try:
+                 requires_python = parse_version_specifier(link.requires_python)
+-            except (InvalidSpecifier, PkgInvalidSpecifier) as e:
+-                raise LinkMismatchError(f"Invalid requires-python: {link.requires_python}") from e
++            except InvalidSpecifier as e:
++                logger.debug(
++                    "Invalid requires-python specifier for link(%s) %s: %s", link.redacted, link.requires_python, e
++                )
++                return
+             if (requires_python & self.env_spec.requires_python).is_empty():
+                 raise LinkMismatchError(
+                     f"The package requires-python {link.requires_python} is not compatible with the target {self.env_spec.requires_python}."
+diff --git a/src/pdm/models/requirements.py b/src/pdm/models/requirements.py
+index c2d75fedd3..66b3cbb445 100644
+--- a/src/pdm/models/requirements.py
++++ b/src/pdm/models/requirements.py
+@@ -14,7 +14,7 @@
+ 
+ from packaging.requirements import InvalidRequirement
+ from packaging.requirements import Requirement as PackageRequirement
+-from packaging.specifiers import SpecifierSet
++from packaging.specifiers import InvalidSpecifier, SpecifierSet
+ from packaging.utils import parse_sdist_filename, parse_wheel_filename
+ 
+ from pdm.compat import Distribution
+@@ -143,7 +143,10 @@ def create(cls: type[T], **kwargs: Any) -> T:
+         if "extras" in kwargs and isinstance(kwargs["extras"], str):
+             kwargs["extras"] = tuple(e.strip() for e in kwargs["extras"][1:-1].split(","))
+         version = kwargs.pop("version", "")
+-        kwargs["specifier"] = get_specifier(version)
++        try:
++            kwargs["specifier"] = get_specifier(version)
++        except InvalidSpecifier as e:
++            raise RequirementError(f'Invalid specifier for {kwargs.get("name")}: {version}: {e}') from None
+         return cls(**{k: v for k, v in kwargs.items() if k in inspect.signature(cls).parameters})
+ 
+     @classmethod
+@@ -171,7 +174,7 @@ def from_dist(cls, dist: Distribution) -> Requirement:
+     @classmethod
+     def from_req_dict(cls, name: str, req_dict: RequirementDict, check_installable: bool = True) -> Requirement:
+         if isinstance(req_dict, str):  # Version specifier only.
+-            return NamedRequirement(name=name, specifier=get_specifier(req_dict))
++            return NamedRequirement.create(name=name, version=req_dict)
+         for vcs in VCS_SCHEMA:
+             if vcs in req_dict:
+                 repo = cast(str, req_dict.pop(vcs, None))
+diff --git a/src/pdm/models/specifiers.py b/src/pdm/models/specifiers.py
+index 1048d96c69..d86424d3da 100644
+--- a/src/pdm/models/specifiers.py
++++ b/src/pdm/models/specifiers.py
+@@ -35,7 +35,7 @@ def _read_max_versions() -> dict[Version, int]:
+ def get_specifier(version_str: str | None) -> SpecifierSet:
+     if not version_str or version_str == "*":
+         return SpecifierSet()
+-    return SpecifierSet(fix_legacy_specifier(version_str))
++    return SpecifierSet(version_str)
+ 
+ 
+ _legacy_specifier_re = re.compile(r"(==|!=|<=|>=|<|>)(\s*)([^,;\s)]*)")

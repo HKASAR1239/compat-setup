@@ -1,0 +1,13 @@
+diff --git a/yt_dlp/extractor/common.py b/yt_dlp/extractor/common.py
+index 20aa0d5b7073..1eb5154a20b1 100644
+--- a/yt_dlp/extractor/common.py
++++ b/yt_dlp/extractor/common.py
+@@ -2193,7 +2193,7 @@ def extract_media(x_media_line):
+                     'quality': quality,
+                     'has_drm': has_drm,
+                     'vcodec': 'none' if is_audio else None,
+-                    'source_preference': -2 if is_alternate else None,
++                    'source_preference': -2 if is_audio and is_alternate else None,
+                     # Save this to assign source_preference based on associated video stream
+                     '_audio_group_id': group_id if is_audio and not is_alternate else None,
+                 } for idx in _extract_m3u8_playlist_indices(manifest_url))

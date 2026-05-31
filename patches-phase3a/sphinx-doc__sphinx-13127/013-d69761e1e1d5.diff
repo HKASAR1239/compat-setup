@@ -1,0 +1,13 @@
+diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
+index 637c2eed740..82642976f19 100644
+--- a/sphinx/builders/linkcheck.py
++++ b/sphinx/builders/linkcheck.py
+@@ -568,7 +568,7 @@ def _check_uri(self, uri: str, hyperlink: Hyperlink) -> _URIProperties:
+                 continue
+ 
+             except requests._IgnoredRedirection as err:
+-                # A redirection to an ignored URI was attempted, and has been ignored
++                # A redirection to an ignored URI was attempted; report it appropriately
+                 return _Status.IGNORED, err.destination, err.status_code
+ 
+             except HTTPError as err:

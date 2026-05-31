@@ -1,0 +1,13 @@
+diff --git a/.github/workflows/integration_app_harness.yml b/.github/workflows/integration_app_harness.yml
+index 6c26073daed..1942b12de11 100644
+--- a/.github/workflows/integration_app_harness.yml
++++ b/.github/workflows/integration_app_harness.yml
+@@ -13,6 +13,8 @@ on:
+     branches: ["main"]
+     paths-ignore:
+       - "**/*.md"
++env:
++  APP_HARNESS_HEADLESS: 1
+ 
+ permissions:
+   contents: read

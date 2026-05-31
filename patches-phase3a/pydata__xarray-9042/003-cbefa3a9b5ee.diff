@@ -1,0 +1,13 @@
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index ba1656ca6d6..9b5f2262b6d 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -7421,7 +7421,7 @@ def from_dataframe(cls, dataframe: pd.DataFrame, sparse: bool = False) -> Self:
+         extension_arrays = []
+         for k, v in dataframe.items():
+             if not is_extension_array_dtype(v) or isinstance(
+-                v, (pd.DatetimeIndex, pd.TimedeltaIndex)
++                v.array, (pd.arrays.DatetimeArray, pd.arrays.TimedeltaArray)
+             ):
+                 arrays.append((k, np.asarray(v)))
+             else:

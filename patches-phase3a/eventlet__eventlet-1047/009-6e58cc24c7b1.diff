@@ -1,0 +1,14 @@
+diff --git a/eventlet/hubs/asyncio.py b/eventlet/hubs/asyncio.py
+index f23e9abad..cfc5f2018 100644
+--- a/eventlet/hubs/asyncio.py
++++ b/eventlet/hubs/asyncio.py
+@@ -43,7 +43,8 @@ def __init__(self):
+         # Allow post-fork() child to continue using the same event loop. This
+         # is a terrible idea.
+         import asyncio.events
+-        asyncio.events.on_fork.__code__ = (lambda: None).__code__
++        if hasattr(asyncio.events, "on_fork"):
++            asyncio.events.on_fork.__code__ = (lambda: None).__code__
+ 
+         self.loop = asyncio.new_event_loop()
+         asyncio.set_event_loop(self.loop)

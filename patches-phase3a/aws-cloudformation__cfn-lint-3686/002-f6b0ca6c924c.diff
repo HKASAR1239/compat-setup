@@ -1,0 +1,54 @@
+diff --git a/src/cfnlint/context/context.py b/src/cfnlint/context/context.py
+index bcc9875651..e75efeb1b5 100644
+--- a/src/cfnlint/context/context.py
++++ b/src/cfnlint/context/context.py
+@@ -289,13 +289,15 @@ class Parameter(_Ref):
+     allowed_values: Any = field(init=False)
+     description: str | None = field(init=False)
+     ssm_path: str | None = field(init=False, default=None)
+-    is_ssm_parameter: bool = field(init=False, default=False)
+ 
+     parameter: InitVar[Any]
+ 
+     def __post_init__(self, parameter) -> None:
+         if not isinstance(parameter, dict):
+             raise ValueError("Parameter must be a object")
++
++        self.is_ssm_parameter = lru_cache()(self.is_ssm_parameter)  # type: ignore
++
+         self.default = None
+         self.allowed_values = []
+         self.min_value = None
+@@ -311,8 +313,7 @@ def __post_init__(self, parameter) -> None:
+ 
+         # SSM Parameter defaults and allowed values point to
+         # SSM paths not to the actual values
+-        if self.type.startswith("AWS::SSM::Parameter::"):
+-            self.is_ssm_parameter = True
++        if self.is_ssm_parameter():
+             self.ssm_path = parameter.get("Default", "")
+             return
+ 
+@@ -359,6 +360,9 @@ def ref(self, context: Context) -> Iterator[Tuple[Any, deque]]:
+         if self.max_value is not None:
+             yield str(self.max_value), deque(["MaxValue"])
+ 
++    def is_ssm_parameter(self) -> bool:
++        return self.type.startswith("AWS::SSM::Parameter::")
++
+ 
+ @dataclass
+ class Resource(_Ref):
+diff --git a/src/cfnlint/rules/resources/properties/Pattern.py b/src/cfnlint/rules/resources/properties/Pattern.py
+index 953cef4633..52b758727a 100644
+--- a/src/cfnlint/rules/resources/properties/Pattern.py
++++ b/src/cfnlint/rules/resources/properties/Pattern.py
+@@ -52,7 +52,7 @@ def pattern(
+         # https://github.com/aws-cloudformation/cfn-lint/issues/3640
+         if validator.context.transforms.has_sam_transform():
+             for _, param in validator.context.parameters.items():
+-                if param.is_ssm_parameter:
++                if param.is_ssm_parameter():
+                     if param.ssm_path == instance:
+                         return
+ 

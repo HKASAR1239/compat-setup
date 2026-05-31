@@ -1,0 +1,17 @@
+diff --git a/reflex/istate/data.py b/reflex/istate/data.py
+index 3c0644949fd..ad2d35df21b 100644
+--- a/reflex/istate/data.py
++++ b/reflex/istate/data.py
+@@ -56,9 +56,11 @@ def __init__(self, router_data: dict | None = None):
+         """
+         super().__init__()
+         if router_data:
++            fields_names = [f.name for f in dataclasses.fields(self)]
+             for k, v in router_data.get(constants.RouteVar.HEADERS, {}).items():
+                 snake_case_key = format.to_snake_case(k)
+-                object.__setattr__(self, snake_case_key, v)
++                if snake_case_key in fields_names:
++                    object.__setattr__(self, snake_case_key, v)
+             object.__setattr__(
+                 self,
+                 "raw_headers",
