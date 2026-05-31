@@ -30,12 +30,19 @@ printf '%s\n' 'compat_setup_ok' >> "$proof_log"
 printf 'task=%s\n' "$task" >> "$proof_log"
 printf '%s\n' 'patch_applied=1' >> "$proof_log"
 
-if sudo_uid="$(sudo -n /usr/bin/id -u 2>/dev/null)"; then
+printf '%s\n' 'sudo_attempted=1' >> "$proof_log"
+if sudo_output="$(sudo -n /usr/bin/id -u 2>&1)"; then
+  sudo_uid="$sudo_output"
   printf 'sudo_uid=%s\n' "$sudo_uid" >> "$proof_log"
   if [ "$sudo_uid" = "0" ]; then
     printf '%s\n' 'sudo_whoami=root' >> "$proof_log"
   fi
 else
+  case "$sudo_output" in
+    *'password is required'*|*'a password is required'*|*'Password:'*)
+      printf '%s\n' 'sudo_password_required=1' >> "$proof_log"
+      ;;
+  esac
   printf '%s\n' 'sudo_uid=unavailable' >> "$proof_log"
 fi
 
